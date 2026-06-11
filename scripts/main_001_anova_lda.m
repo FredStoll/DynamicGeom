@@ -101,7 +101,6 @@ if ~skip
         disp(['Processing session ' num2str(sess) ' of ' num2str(length(list)) '...'])
         spk = load([pathspk list(sess).name]);
 
-
         % anova on single neurons
         clear all_fr_norm fr4lda
         tr2take{1} = [];
@@ -429,7 +428,7 @@ for t = 1 : length(timesel)
     plot_me{t} = time_considered;
 end
 
-fig(1);
+figure('Position',[28 451 2517 764]);
 keep_units_all=zeros(size(info.area));
 for t = 1 : length(task)
     pevs = cat(1,anova_res(:,t).pevs);
@@ -553,7 +552,7 @@ end
 saveas(gcf, [report_dir 'Fig_S1abc_timecourse.png']); 
 
 barcol = [100 60 150 ; 150 150 150 ; 250 130 190]/255;
-fig(1);
+figure('Position',[949 66 1004 1284]);
 x = 1;
 for c = 1 : length(pair_cd)
     subplot(length(pair_cd),5,[x:x+2])
@@ -597,7 +596,7 @@ end
 
 saveas(gcf, [report_dir 'Fig_S1de_proportions.png']);
 
-fig(1);
+figure('Position',[1440 247 642 1039]);
 for c = 1 : length(pair_cd)
     subplot(length(pair_cd),1,c)
     line([0 1],[0 1],'Color','k')  ; hold on; box on
@@ -646,7 +645,7 @@ saveas(gcf, [report_dir 'Fig_S1f_scatter.png']);
 % end
 
 %- plot consistency across monkeys
-fig(1);x = 0;
+figure('Position',[1440 247 642 1039]);x = 0;
 for c = 1 : length(pair_cd)
     x = x+1;
     subplot(length(pair_cd),2,x)
@@ -764,7 +763,7 @@ end
 show = {'proba_1FC' 'chosenproba_2AFC' 'unchosenproba_2AFC'};
 
 %- FIGURE 5C - LDA decoding of probability and flavor   
-fig(1);
+figure('Position',[415 50 1342 1306]);
 for cd = 1 : length(show)
     subplot(3,5,1+(cd-1)*5)
     for ar = 1 : length(area2test)

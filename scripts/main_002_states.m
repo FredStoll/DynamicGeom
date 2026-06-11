@@ -169,7 +169,7 @@ end
 saveas(gcf, [report_dir 'Fig_2ab_example.png']); 
 
 x=0;
-fig(1);
+figure("Position",[ 853         108        1016        1204]);
 for m = 1 : length(unique(monks))
     nb_states_mk = nb_states(ismember(monks, mk_names{m}),:);
     dur_states_mk = dur_states(ismember(monks, mk_names{m}),:);
@@ -353,7 +353,7 @@ end
 saveas(gcf, [report_dir 'Fig_2cd_states.png']);
 
 % improved plot per monkey (box + jittered lines like earlier style) including t_states
-fig(1);
+figure("Position",[ 853         108        1016        1204]);
 jitter = 0.35;
 rng(1); % reproducible jitter
 
@@ -481,8 +481,6 @@ if ~isempty(tbl_t)
     utils_diary(fid_log, '%s', evalc('anova(mdl_t)'));
 end
 
-
-
 %% ratio of chosen/unchosen states number against preference bias
 load([param.path2proc 'behav_pref.mat'],'preference');
 ratio_ch_unch = nb_states(:,1) ./ nb_states(:,2);
@@ -513,50 +511,6 @@ saveas(gcf, [report_dir 'Fig_extra_pref_states.png']);
 
 %% look at posteriors and saccades
 
-% show all posteriors across sessions
-fig(1);
-x = 0;
-for sess = 1 : length(out)
-    x = x + 1;
-    if x == 101
-        fig(1);x=1;
-    end
-    if ~isempty(out(sess).adjusted_prediction_scores_rand)
-        subplot(10,10,x)
-    else
-        continue
-    end
-
-    time_sub = out(sess).time>=-500 & out(sess).time<=1000;
-    pred_norm = out(sess).adjusted_prediction_scores_rand; 
-
-    for c = 1 : 3
-        plot(out(sess).time(time_sub),mean(squeeze(pred_norm(:,time_sub,c))),"Color",col(c,:));hold on
-        % shading with sem using patch
-        y1 = mean(squeeze(pred_norm(:,time_sub,c))) - std(squeeze(pred_norm(:,time_sub,c))) / sqrt(size(pred_norm,1));
-        y2 = mean(squeeze(pred_norm(:,time_sub,c))) + std(squeeze(pred_norm(:,time_sub,c))) / sqrt(size(pred_norm,1));
-        x2 = [out(sess).time(time_sub) fliplr(out(sess).time(time_sub))];
-        inBetween = [y1 fliplr(y2)];
-        fill(x2, inBetween, col(c,:),'FaceAlpha',0.2,'EdgeColor','none');
-    end
-
-    % subplot(1,2,2) %- normalized BL
-    % time_bl = out(sess).time>=-500 & out(sess).time<=0;
-    % for c = 1 : 3
-    %     pred_norm(:,:,c) = pred_norm(:,:,c) - mean(pred_norm(:,time_bl,c),2);
-    % end
-    % for c = 1 : 3
-    %     plot(out(sess).time(time_sub),mean(squeeze(pred_norm(:,time_sub,c))),"Color",col(c,:));hold on
-    %     % shading with sem using patch
-    %     y1 = mean(squeeze(pred_norm(:,time_sub,c))) - std(squeeze(pred_norm(:,time_sub,c))) / sqrt(size(pred_norm,1));
-    %     y2 = mean(squeeze(pred_norm(:,time_sub,c))) + std(squeeze(pred_norm(:,time_sub,c))) / sqrt(size(pred_norm,1));
-    %     x2 = [out(sess).time(time_sub) fliplr(out(sess).time(time_sub))];
-    %     inBetween = [y1 fliplr(y2)];
-    %     fill(x2, inBetween, col(c,:),'FaceAlpha',0.2,'EdgeColor','none');
-    % end
-end
-
-
 % average across sessions
 time_bl = out(1).time>=-500 & out(1).time<=0;
 
@@ -572,17 +526,6 @@ for sess = 1 : length(out)
         pred_all(x,:,:) = squeeze(mean(pred_norm(:,time_sub,:),1));
     end
 end
-% fig(1);
-% for c = 1 : 3
-%     plot(out(sess).time(time_sub),mean(squeeze(pred_all(:,:,c))),"Color",col(c,:));hold on
-%     % shading with sem using patch
-%     y1 = mean(squeeze(pred_all(:,:,c))) - std(squeeze(pred_all(:,:,c))) / sqrt(size(pred_all,1));
-%     y2 = mean(squeeze(pred_all(:,:,c))) + std(squeeze(pred_all(:,:,c))) / sqrt(size(pred_all,1));
-%     x2 = [out(sess).time(time_sub) fliplr(out(sess).time(time_sub))];
-%     inBetween = [y1 fliplr(y2)];
-%     fill(x2, inBetween, col(c,:),'FaceAlpha',0.2,'EdgeColor','none');
-% end
-
 
 % load saccades and compare decoding posteriors for quick vs hesitating saccades
 load([param.path2proc 'saccadeCounts_reduced.mat']); % table with saccade counts per trial
@@ -822,75 +765,75 @@ sig_pval_int(idxs) = true;
 
 newtime = out(sess).time(time_sub);
 
-fig(1); 
-% Quick deliberation
-subplot(6,2,[1 3])
-for c = 1 : 3
-    m = mean(squeeze(pred_quick(:,:,c)),'omitnan');
-    s = std(squeeze(pred_quick(:,:,c)),'omitnan') / sqrt(size(pred_quick,1));
-    plot(newtime, m, 'Color', col(c,:)); hold on;
-    fill([newtime fliplr(newtime)], [m-s fliplr(m+s)], col(c,:), ...
-        'FaceAlpha',0.2, 'EdgeColor','none');
-end
-sig_idx = find(sig_pval_int);
-scatter(newtime(sig_idx), repmat(.095, size(sig_idx)), 10, 'k', 'filled');
-ylim([-0.05 .1]);
-title('Quick deliberation');
+% fig(1); 
+% % Quick deliberation
+% subplot(6,2,[1 3])
+% for c = 1 : 3
+%     m = mean(squeeze(pred_quick(:,:,c)),'omitnan');
+%     s = std(squeeze(pred_quick(:,:,c)),'omitnan') / sqrt(size(pred_quick,1));
+%     plot(newtime, m, 'Color', col(c,:)); hold on;
+%     fill([newtime fliplr(newtime)], [m-s fliplr(m+s)], col(c,:), ...
+%         'FaceAlpha',0.2, 'EdgeColor','none');
+% end
+% sig_idx = find(sig_pval_int);
+% scatter(newtime(sig_idx), repmat(.095, size(sig_idx)), 10, 'k', 'filled');
+% ylim([-0.05 .1]);
+% title('Quick deliberation');
 
-% Hesitation
-subplot(6,2,[2 4])
-for c = 1 : 3
-    m = mean(squeeze(pred_hesit(:,:,c)),'omitnan');
-    s = std(squeeze(pred_hesit(:,:,c)),'omitnan') / sqrt(size(pred_hesit,1));
-    plot(newtime, m, 'Color', col(c,:)); hold on;
-    fill([newtime fliplr(newtime)], [m-s fliplr(m+s)], col(c,:), ...
-        'FaceAlpha',0.2, 'EdgeColor','none');
-end
-sig_idx = find(sig_pval_int);
-scatter(newtime(sig_idx), repmat(.095, size(sig_idx)), 10, 'k', 'filled');
-ylim([-0.05 .1]);
-title('Hesitation');
+% % Hesitation
+% subplot(6,2,[2 4])
+% for c = 1 : 3
+%     m = mean(squeeze(pred_hesit(:,:,c)),'omitnan');
+%     s = std(squeeze(pred_hesit(:,:,c)),'omitnan') / sqrt(size(pred_hesit,1));
+%     plot(newtime, m, 'Color', col(c,:)); hold on;
+%     fill([newtime fliplr(newtime)], [m-s fliplr(m+s)], col(c,:), ...
+%         'FaceAlpha',0.2, 'EdgeColor','none');
+% end
+% sig_idx = find(sig_pval_int);
+% scatter(newtime(sig_idx), repmat(.095, size(sig_idx)), 10, 'k', 'filled');
+% ylim([-0.05 .1]);
+% title('Hesitation');
 
-% only show sig_fdr when sig interaction!
-%signif_fdr(~sig_pval_int, :) = false;
+% % only show sig_fdr when sig interaction!
+% %signif_fdr(~sig_pval_int, :) = false;
 
-for i = 1:3
-    % Quick comparisons
-    subplot(6,2,4+(2*i-1))
-    plot(newtime, estimates(:,i), 'k'); hold on;
-    scatter(newtime(signif_fdr(:,i)), estimates(signif_fdr(:,i),i), 20, 'r', 'filled');
-    yline(0, 'k--');
-    xlabel('Time (ms)'); ylabel('t-statistic');
-    ylim([-15 15]);
-    title(sprintf('%s vs %s', groups{comparisons(i,1)}, groups{comparisons(i,2)}));
+% for i = 1:3
+%     % Quick comparisons
+%     subplot(6,2,4+(2*i-1))
+%     plot(newtime, estimates(:,i), 'k'); hold on;
+%     scatter(newtime(signif_fdr(:,i)), estimates(signif_fdr(:,i),i), 20, 'r', 'filled');
+%     yline(0, 'k--');
+%     xlabel('Time (ms)'); ylabel('t-statistic');
+%     ylim([-15 15]);
+%     title(sprintf('%s vs %s', groups{comparisons(i,1)}, groups{comparisons(i,2)}));
 
-    % Hesit comparisons
-    subplot(6,2,4+(2*i))
-    plot(newtime, estimates(:,i+3), 'k'); hold on;
-    scatter(newtime(signif_fdr(:,i+3)), estimates(signif_fdr(:,i+3),i+3), 20, 'r', 'filled');
-    yline(0, 'k--');
-    xlabel('Time (ms)'); ylabel('t-statistic');
-    ylim([-15 15]);
-    title(sprintf('%s vs %s', groups{comparisons(i+3,1)}, groups{comparisons(i+3,2)}));
-end
+%     % Hesit comparisons
+%     subplot(6,2,4+(2*i))
+%     plot(newtime, estimates(:,i+3), 'k'); hold on;
+%     scatter(newtime(signif_fdr(:,i+3)), estimates(signif_fdr(:,i+3),i+3), 20, 'r', 'filled');
+%     yline(0, 'k--');
+%     xlabel('Time (ms)'); ylabel('t-statistic');
+%     ylim([-15 15]);
+%     title(sprintf('%s vs %s', groups{comparisons(i+3,1)}, groups{comparisons(i+3,2)}));
+% end
 
-% Posthoc: Quick-chosen vs Hesit-chosen
-subplot(6,2,11)
-plot(newtime, estimates(:,7), 'k'); hold on;
-scatter(newtime(signif_fdr(:,7)), estimates(signif_fdr(:,7),7), 20, 'r', 'filled');
-yline(0, 'k--');
-xlabel('Time (ms)'); ylabel('t-statistic');
-ylim([-15 15]);
-title('Quick-Chosen vs Hesit-Chosen');
+% % Posthoc: Quick-chosen vs Hesit-chosen
+% subplot(6,2,11)
+% plot(newtime, estimates(:,7), 'k'); hold on;
+% scatter(newtime(signif_fdr(:,7)), estimates(signif_fdr(:,7),7), 20, 'r', 'filled');
+% yline(0, 'k--');
+% xlabel('Time (ms)'); ylabel('t-statistic');
+% ylim([-15 15]);
+% title('Quick-Chosen vs Hesit-Chosen');
 
-% Posthoc: Quick-unchosen vs Hesit-unchosen
-subplot(6,2,12)
-plot(newtime, estimates(:,8), 'k'); hold on;
-scatter(newtime(signif_fdr(:,8)), estimates(signif_fdr(:,8),8), 20, 'r', 'filled');
-yline(0, 'k--');
-xlabel('Time (ms)'); ylabel('t-statistic');
-ylim([-15 15]);
-title('Quick-Unchosen vs Hesit-Unchosen');
+% % Posthoc: Quick-unchosen vs Hesit-unchosen
+% subplot(6,2,12)
+% plot(newtime, estimates(:,8), 'k'); hold on;
+% scatter(newtime(signif_fdr(:,8)), estimates(signif_fdr(:,8),8), 20, 'r', 'filled');
+% yline(0, 'k--');
+% xlabel('Time (ms)'); ylabel('t-statistic');
+% ylim([-15 15]);
+% title('Quick-Unchosen vs Hesit-Unchosen');
 
 
 %% -- State count & duration: Quick vs Hesit (probability-matched trials) --
@@ -991,7 +934,7 @@ for ph = 1:nPH
 end
 
 % === Plot with significance brackets ===
-figure; set(gcf, 'Renderer', 'painters');  % vector-safe for CorelDraw/EMF export
+figure("Position",[741   555   846   720]); set(gcf, 'Renderer', 'painters');  % vector-safe for CorelDraw/EMF export
 col_type_sq = [0.2 0.5 0.8; 0.8 0.3 0.3]; % blue=quick, red=hesit
 xlabels_sq = {'Ch-Quick','Ch-Hesit','Unch-Quick','Unch-Hesit','Other-Quick','Other-Hesit'};
 positions_q_sq = [1 3 5];
@@ -1028,7 +971,7 @@ end
 hbp_nb = boxplot(data_nb_sq(valid_rows_nb,:), 'Colors', scatter_cols_sq, 'Symbol','','Widths',0.65,'Positions',1:6,'Labels',xlabels_sq);
 set(hbp_nb, 'LineWidth', 2);
 xlabel('Group','FontSize',16); ylabel('Number of states/trial','FontSize',16);
-title('Number of states: Quick vs Hesit (prob-matched)','FontSize',16);
+title('Number of states','FontSize',16);
 set(gca,'XTick',1:6,'XTickLabel',xlabels_sq,'FontSize',16);
 % Significance brackets (all 3 comparisons, showing p-value)
 yl_nb = ylim;
@@ -1059,7 +1002,7 @@ end
 hbp_dur = boxplot(data_dur_sq(valid_rows_dur,:), 'Colors', scatter_cols_sq, 'Symbol','','Widths',0.65,'Positions',1:6,'Labels',xlabels_sq);
 set(hbp_dur, 'LineWidth', 2);
 xlabel('Group','FontSize',16); ylabel('Duration of states (s)','FontSize',16);
-title('Duration of states: Quick vs Hesit (prob-matched)','FontSize',16);
+title('Duration of states','FontSize',16);
 set(gca,'XTick',1:6,'XTickLabel',xlabels_sq,'FontSize',16);
 % Significance brackets (all 3 comparisons, showing p-value)
 yl_dur = ylim;
@@ -1229,7 +1172,7 @@ median_nb_removed = median(out_table.nb_removed);
 median_nb_removed_log = log(median_nb_removed);
 
 % Plot: Estimated R per area at median nb_removed, and performance drop vs nb_removed
-figure;
+figure('Position',[ 443   296   522   858]);
 subplot(3,1,[2 3]); hold on;
 
 % Find which area is the reference (intercept) in the model
@@ -1335,3 +1278,6 @@ xlabel('Number of Neurons Removed');
 ylabel('Correlation Coefficient (R)');
 title('Performance Drop (from LME)');
 box off; hold off;
+
+saveas(gcf, [report_dir 'Fig_2h_ablation.png']);
+

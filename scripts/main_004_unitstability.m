@@ -214,7 +214,7 @@ end
 
 % Create combined 2x3 figure: flavor (row 1) | side (row 2)
 %   columns: sign consistency | scatter vs generalization | flip rate
-fig_combined = figure('Name','Fig S8 - Sign Consistency & Flip Rate','Position',[50 50 1600 700]);
+fig_combined = figure('Name','Fig S8 - Sign Consistency & Flip Rate','Position',[50 50 1600 950]);
 
 %% ========================================================================
 % Subplot (2,3,1): Flavor sign consistency - deviation from chance

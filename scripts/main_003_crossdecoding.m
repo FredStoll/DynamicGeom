@@ -830,7 +830,7 @@ for p = 1 : length(param.param2decode)
         % Heatmap + geometry specificity + gain modulation composite (for CCGP and shCCGP)
         if metric <= 2
 
-            fig_main = figure('Position', [50 50 1400 750], 'Color', 'w');
+            fig_main = figure('Position', [358   329   841   750], 'Color', 'w');
 
             % --- Layout for 9 heatmaps plus two contrast bar panels ---
             ml = 0.030; mr = 0.018; mt = 0.09; mb = 0.10;
@@ -1215,7 +1215,7 @@ for p = 1 : length(param.param2decode)
     else
         ct = all_contrasts{p, 1};
         fig_genrz = figure('Name', ['CCGP Generalization - ' fig_ttl], ...
-                           'Position', [80 80 900 600], 'Color', 'w');
+                           'Position', [80 240 450 450], 'Color', 'w');
         ax_genrz = axes(fig_genrz);
         [~, sidx_genrz] = sort(ct.genrz_est, 'descend');
         hold(ax_genrz, 'on');
@@ -1509,7 +1509,7 @@ tick_N_ws = tick_N_ws(tick_N_ws <= param.pseudopop(end));
 ylims_ws  = {[0.45 0.85], [0.4 1.0]};   % {flavor, side}
 
 fig_ws = figure('Name', 'Within-state decoding', ...
-                'Position', [100 100 1100 850], 'Color', 'w');
+                'Position', [100 100 1100 1130], 'Color', 'w');
 tl_ws  = tiledlayout(fig_ws, 2, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
 title(tl_ws, 'Within-state decoding  (avg chosen + unchosen)', ...
       'FontSize', 18, 'FontWeight', 'bold');
@@ -1755,7 +1755,7 @@ for p_ph = 1 : length(param.param2decode)
 
     % Build figure
     fig_ph = figure('Name', ['CCGP posthoc area - ' param_name_ph], ...
-                    'Position', [50 50 1500 560], 'Color', 'w');
+                    'Position', [417 416 1500 344], 'Color', 'w');
     tl_ph  = tiledlayout(fig_ph, 1, 3, 'TileSpacing', 'compact', 'Padding', 'compact');
     title(tl_ph, ['CCGP - pairwise area posthoc - ' param_name_ph], ...
           'FontSize', 18, 'FontWeight', 'bold');
