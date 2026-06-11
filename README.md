@@ -35,9 +35,7 @@ At project root:
 ## Typical Usage
 
 1. Open MATLAB and set current folder to project root (`PAV2INS`).
-2. Run dataset creation once (or when raw data changes):
-   - `run('scripts/main_000_create_dataset.m')`
-3. Run full analysis pipeline:
+2. Run full analysis pipeline:
    - `run('scripts/run_all.m')`
 
 ## Notes
