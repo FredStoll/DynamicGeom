@@ -1,4 +1,4 @@
-# PAV2INS Pipeline
+# DynamicGeom Pipeline
 
 This repository contains MATLAB scripts to build pooled datasets and run the analysis pipeline.
 
@@ -9,7 +9,7 @@ This repository contains MATLAB scripts to build pooled datasets and run the ana
 - `scripts/main_000_behav.m`: behavioral preference/saccade analysis, report and figures in `report_000`.
 - `scripts/main_001_anova_lda.m`: ANOVA + LDA outputs in `processed` and report in `report_001`.
 - `scripts/main_002_states.m`: state decoding outputs and report in `report_002`.
-- `scripts/main_003_crossdecoding.m`: CCGP/shCCGP analyses and report in `report_003`.
+- `scripts/main_003_crossdecoding.m`: crossdecoding analyses and report in `report_003`.
 - `scripts/main_004_unitstability.m`: unit stability figures/statistics and report in `report_004`.
 
 ## Path Handling
@@ -34,7 +34,7 @@ At project root:
 
 ## Typical Usage
 
-1. Open MATLAB and set current folder to project root (`PAV2INS`).
+1. Open MATLAB and set current folder to project root (`DynamicGeom`).
 2. Run full analysis pipeline:
    - `run('scripts/run_all.m')`
 

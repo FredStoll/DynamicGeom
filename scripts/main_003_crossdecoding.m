@@ -1,56 +1,32 @@
 ﻿%% main_003_crossdecoding.m
 %
-% Cross-decoding with regularized diagonal LDA (no PCA in the fold-level decoder).
+% Cross-decoding with regularized diagonal LDA.
 %
 % Pseudopopulations have zero noise correlations by construction, so the
 % true Sw is diagonal.  The correct decoder is diagonal LDA in the full
 % N-dimensional space:
 %   w_i = (mu1_i - mu2_i) / (pv_i + alpha*mean(pv))
 % where alpha=0.01 provides L2 regularization against near-silent neurons.
-% No PCA is used here because pseudopop samples are already decorrelated.
 %
-% Full 2x2 cross-decoding producing both CCGP and shCCGP for all four cells
-% (CC, CU, UC, UU), following Nogueira et al. 2026.
+% Full 2x2 cross-decoding producing CCGP for all four cells (CC, CU, UC, UU).
 %
 % Key design choices
 %
-%   CCGP  = accuracy with training-calibrated threshold 
-%   shCCGP = accuracy with optimally shifted threshold 
+%   CCGP  = accuracy with training-calibrated threshold
 %
-%   Both are computed by pooling CV-fold scores within each (trainState,
-%   testState) direction, then:
+%   Computed by pooling CV-fold scores within each (trainState, testState)
+%   direction, then:
 %     CCGP  = accuracy at threshold delta = 0   (training midpoint mapped to 0)
-%     shCCGP = max accuracy over a fine threshold grid delta in [-3, 3]
 %
 %   Pooling is valid because each trial appears in exactly one test fold
 %   (no train/test overlap).  Scores from different folds are normalised by
 %   the within-fold training class-separation before pooling so that the
 %   training threshold is always at 0 in normalised units.  With minTr = 20
 %   this yields 20 test observations per class per direction (pooled over
-%   10 folds x 2 trials), giving a stable threshold scan with no inflation.
-%
-%   NOTE on within-state cells (CC and UU):
-%     The training and test distributions are from the SAME state, so the
-%     training-calibrated threshold is appropriate and shCCGP ~ CCGP.  Any
-%     small improvement reflects sampling noise, not a midpoint shift.  This
-%     acts as a built-in negative control for the H2 test.
-%
-% H2 test (shift / midpoint displacement)
-%
-%   Improvement  = shCCGP - CCGP   (per cell)
-%
-%   Generalization of the improvement 2x2 = mean(CU_improv, UC_improv) - mean(CC_improv, UU_improv)
-%
-%   Interpretation:
-%     genrz_improv > 0 & FDR-significant:
-%       The optimal threshold is displaced cross-state MORE than within-state
-%       -> the decision midpoint shifts between states -> H2
-%     genrz_improv ~ 0:
-%       No systematic threshold shift -> axis rotated (H3) or scaled (H4)
-%       rather than shifted.
+%   10 folds x 2 trials).
 %
 % Outputs:
-%   processed/states_2afc_ccgp*.mat        acc_overall, shc_overall, imp_overall
+%   processed/states_2afc_ccgp*.mat        acc_overall
 %   report_003*/                           figures and output log
 %
 % Dependencies
@@ -62,7 +38,6 @@
 clear
 overwrite_fr       = false;   % recompute FR matrix cache
 overwrite_decoding = false;   % rerun decoding (outer save file)
-plot_shCCGP = false;
 
 %% **************** Parameters **************************************************************
 f = mfilename('fullpath');
@@ -83,11 +58,6 @@ param.init_decoder   = '';
 
 N_eval_global = 200;   % fixed evaluation point for reported contrasts
 fdr_alpha     = 0.05;  % FDR significance threshold
-
-% Threshold scan grid for shCCGP (in normalised units where training threshold = 0,
-% class means on training data are at ~= +/-1).  101 points over [-3, 3] gives
-% resolution of 0.06 - negligible bias at minTr = 20 per class.
-delta_grid = linspace(-3, 3, 101);
 
 switch param.match_type
     case 'time',        match_sfx = '_timematched';
@@ -117,7 +87,7 @@ if ~exist(report_dir, 'dir'), mkdir(report_dir); end
 fr_cache = [param.path2go 'states_2afc_fr' match_sfx init_sfx '.mat'];
 savefile = [param.path2go 'states_2afc_ccgp' match_sfx init_sfx '.mat'];
 
-%% Compute 2x2 CCGP and shCCGP
+%% Compute 2x2 CCGP
 
 if ~exist(savefile, 'file') || overwrite_decoding
 
@@ -125,7 +95,7 @@ if ~exist(savefile, 'file') || overwrite_decoding
     %
     % The cache (states_2afc_fr*.mat) stores one row per trial per
     % neuron.  Columns 1-3 of all_fr_stacked are mean firing rates in the
-    % Chosen, Unchosen, and Other HMM states respectively (averaged over all
+    % Chosen, Unchosen, and Other states respectively (averaged over all
     % time bins assigned to that state for that trial).
     %
     % all_behav_stacked has matching rows with per-trial behaviour columns:
@@ -144,7 +114,7 @@ if ~exist(savefile, 'file') || overwrite_decoding
     %                   Chosen<->Unchosen state labels while keeping the same
     %                   time bins; FR values come from identical windows but
     %                   the identity (Chosen vs Unchosen) is randomised.
-    %                   Null for all CCGP/shCCGP contrasts.
+    %                   Null for all CCGP contrasts.
 
     if ~exist(fr_cache, 'file') || overwrite_fr
 
@@ -243,22 +213,9 @@ if ~exist(savefile, 'file') || overwrite_decoding
     %   dim 3 = trainState (1=Chosen, 2=Unchosen)
     %   dim 4 = testState
     acc_overall = cell(length(mks), 1);   % CCGP (accuracy, fixed threshold)
-    shc_overall = cell(length(mks), 1);   % shCCGP (accuracy, optimal threshold)
-    % bias_curve: mean accuracy-vs-delta curve at N_eval only
-    %   {mk}{ar,p}(trainState, testState, n_delta)  - averaged over repetitions
-    bias_curve           = cell(length(mks), 1);
-    bias_curve_N_used    = cell(length(mks), 1);   % N actually used per area/monkey/param
-    % peak_loc_reps_final: per-repetition peak delta* at the largest valid N
-    %   {mk}{ar,p}(trainState, testState, n_rep) - delta_grid value of shCCGP peak per rep
-    peak_loc_reps_final  = cell(length(mks), 1);
     for mk_idx = 1 : length(mks)
-        acc_overall{mk_idx}         = cell(nAreas, length(param.param2decode));
-        shc_overall{mk_idx}         = cell(nAreas, length(param.param2decode));
-        bias_curve{mk_idx}          = cell(nAreas, length(param.param2decode));
-        bias_curve_N_used{mk_idx}   = cell(nAreas, length(param.param2decode));
-        peak_loc_reps_final{mk_idx} = cell(nAreas, length(param.param2decode));
+        acc_overall{mk_idx} = cell(nAreas, length(param.param2decode));
     end
-    n_delta = length(delta_grid);
 
     for p = 1 : length(param.param2decode)
         for m = 1 : length(mks)
@@ -296,25 +253,11 @@ if ~exist(savefile, 'file') || overwrite_decoding
                 unit_id = unit_id(unit2take);
 
                 acc_overall{m}{ar,p} = NaN(length(param.pseudopop), param.Repetition, 2, 2);
-                shc_overall{m}{ar,p} = NaN(length(param.pseudopop), param.Repetition, 2, 2);
-                % bias_curve: accumulated at the LARGEST valid N for this area/monkey.
-                % Reset at each new valid N level; after the u-loop the accumulator
-                % holds data from the highest N reached.
-                bias_curve_sum = zeros(2, 2, n_delta);
-                bias_curve_cnt = zeros(2, 2);
-                bias_curve_N   = NaN;   % will record the N actually used
-                peak_loc_reps  = NaN(2, 2, param.Repetition);   % init; reset at each valid N
 
                 % Pseudopop loop
                 for u = 1 : length(param.pseudopop)
 
                     if length(unit2take) <= param.pseudopop(u), continue; end
-
-                    % New valid N level: reset accumulator so only this N is kept
-                    bias_curve_sum = zeros(2, 2, n_delta);
-                    bias_curve_cnt = zeros(2, 2);
-                    bias_curve_N   = param.pseudopop(u);
-                    peak_loc_reps  = NaN(2, 2, param.Repetition);   % reset for this N level
 
                       disp(['crossdecode: p=' num2str(p) ' m=' num2str(m) ' ' ...
                           area2test_name{ar} ' N=' num2str(param.pseudopop(u))])
@@ -424,138 +367,33 @@ if ~exist(savefile, 'file') || overwrite_decoding
                                 acc_overall{m}{ar,p}(u, pp, trainState, testState) = ...
                                     mean(pred_ccgp == labels_pooled);
 
-                                % shCCGP: max accuracy over threshold grid
-                                % Scan delta over delta_grid; for each delta, predict class 1
-                                % when score > delta.  shCCGP = max accuracy over grid.
-                                % With minTr = 20 per class and nFolds = 10, pooled
-                                % set has 20 obs per class (each appears in exactly
-                                % one test fold) - sufficient for a stable scan.
-                                acc_grid = zeros(n_delta, 1);
-                                for di = 1 : n_delta
-                                    pred_di = double(scores_pooled > delta_grid(di));
-                                    acc_grid(di) = mean(pred_di == labels_pooled);
-                                end
-                                shc_val = max(acc_grid);
-                                shc_overall{m}{ar,p}(u, pp, trainState, testState) = shc_val;
-                                % Use mean delta of ALL tied peak positions to avoid
-                                % MATLAB first-occurrence bias (max() returns leftmost
-                                % tie, which drags delta* toward -3 for flat curves).
-                                tied_di = find(acc_grid == shc_val);
-                                peak_loc_reps(trainState, testState, pp) = mean(delta_grid(tied_di));
-
-                                % Accumulate bias curve (reset to this N level at the start of the loop)
-                                bias_curve_sum(trainState, testState, :) = ...
-                                    bias_curve_sum(trainState, testState, :) + ...
-                                    reshape(acc_grid, 1, 1, n_delta);
-                                bias_curve_cnt(trainState, testState) = ...
-                                    bias_curve_cnt(trainState, testState) + 1;
-
                             end  % testState
                         end  % trainState
 
                     end  % pp (repetitions)
                 end  % u (pseudopop sizes)
 
-                % Average bias curve over repetitions at the highest valid N
-                bc = NaN(2, 2, n_delta);
-                for trnS = 1:2
-                    for tstS = 1:2
-                        if bias_curve_cnt(trnS, tstS) > 0
-                            bc(trnS, tstS, :) = bias_curve_sum(trnS, tstS, :) / ...
-                                                bias_curve_cnt(trnS, tstS);
-                        end
-                    end
-                end
-                bias_curve{m}{ar,p}          = bc;
-                bias_curve_N_used{m}{ar,p}   = bias_curve_N;   % record N for figure title
-                peak_loc_reps_final{m}{ar,p} = peak_loc_reps;   % per-rep peak delta* at max valid N
-
             end  % ar (areas)
         end  % m (monkeys)
     end  % p (parameters)
 
-    % Improvement = shCCGP - CCGP  (element-wise, same indexing)
-    imp_overall = cell(length(mks), 1);
-    for mk_idx = 1 : length(mks)
-        imp_overall{mk_idx} = cell(nAreas, length(param.param2decode));
-        for ar = 1 : nAreas
-            for p = 1 : length(param.param2decode)
-                if ~isempty(acc_overall{mk_idx}{ar,p})
-                    imp_overall{mk_idx}{ar,p} = ...
-                        shc_overall{mk_idx}{ar,p} - acc_overall{mk_idx}{ar,p};
-                end
-            end
-        end
-    end
-
-    save(savefile, 'acc_overall', 'shc_overall', 'imp_overall', 'bias_curve', ...
-         'bias_curve_N_used', 'peak_loc_reps_final', 'param', 'area2test_name', ...
-         'N_eval_global', 'delta_grid', '-v7.3');
+    save(savefile, 'acc_overall', 'param', 'area2test_name', ...
+         'N_eval_global', '-v7.3');
     fprintf('Saved: %s\n', savefile);
 
 else
-    disp('Loading existing shCCGP 2x2 results...')
+    disp('Loading existing CCGP 2x2 results...')
     load(savefile)
     param.param2decode = {'chosenflavor_2AFC' 'chosenside_2AFC'};
-    if ~exist('bias_curve_N_used', 'var')
-        bias_curve_N_used = [];   % field missing in earlier saves, default to empty
-    end
-    if ~exist('peak_loc_reps_final', 'var')
-        peak_loc_reps_final = [];  % peak location data absent in earlier saves, default to empty
-    end
 end
 
-
-%% ** Peak location statistics *****************************************************
-%
-% For each area / monkey / parameter / cell (trainState x testState):
-%   Mean and SEM of peak delta* across repetitions at the largest valid N.
-%   Wilcoxon signed-rank: H0: median(delta*) = 0  (training threshold is optimal).
-%   Raw p-values stored; FDR correction applied jointly across all areas/monkeys
-%   in the figure section (36 tests per parameter).
-%
-% Interpretation:
-%   delta*_CU and delta*_UC FDR-significant with opposite signs -> H2.
-%   delta*_CU ~= delta*_UC ~= 0                                 -> H3 / no signal.
-
-pk_stat = cell(length(mks), 1);
-for mk_idx = 1 : length(mks)
-    pk_stat{mk_idx} = cell(nAreas, length(param.param2decode));
-end
-
-if ~isempty(peak_loc_reps_final)
-    for p_pk = 1 : length(param.param2decode)
-        for m = 1 : length(mks)
-            for ar = 1 : nAreas
-                pklr = peak_loc_reps_final{m}{ar, p_pk};  % 2x2xRepetition or NaNs
-                if isempty(pklr), continue; end
-                st.mean_pk = NaN(2, 2);
-                st.sem_pk  = NaN(2, 2);
-                st.pval_pk = NaN(2, 2);   % Wilcoxon signed-rank: H0 median(delta*)=0
-                for trnS = 1 : 2
-                    for tstS = 1 : 2
-                        v = squeeze(pklr(trnS, tstS, :));
-                        v = v(~isnan(v));
-                        if numel(v) < 2, continue; end
-                        st.mean_pk(trnS, tstS) = mean(v);
-                        st.sem_pk(trnS, tstS)  = std(v) / sqrt(numel(v));
-                        st.pval_pk(trnS, tstS) = signrank(v, 0);
-                    end
-                end
-                pk_stat{m}{ar, p_pk} = st;
-            end
-        end
-    end
-end
 
 %% ** LME statistics *******************************************************
 %
-% Metrics 1-3: full 2x2 LME - Perf ~ TrainState * TestState * Area * NbNeuronsSat + (1|Monkey)
-%   (1) acc_overall -> CCGP 2x2  -> generalization = CCGP above chance
-%   (2) shc_overall -> shCCGP 2x2 -> generalization = shCCGP above chance
-%   (3) imp_overall -> Improvement 2x2 -> generalization = H2 test; geometry specificity = cross-specificity
+% Full 2x2 LME - Perf ~ TrainState * TestState * Area * NbNeuronsSat + (1|Monkey)
+%   acc_overall -> CCGP 2x2  -> generalization = CCGP above chance
 %
-% All evaluated at N = N_eval_global.
+% Evaluated at N = N_eval_global.
 
 diary off;
 fid_log = fopen([report_dir 'output_003.txt'], 'w');
@@ -567,19 +405,16 @@ utils_diary(fid_log, 'N_eval = %d  (log2 = %.3f)\n', N_eval_global, log2(N_eval_
 LogN_common = log2(N_eval_global);
 LogN_vec    = log2(param.pseudopop);
 
-perf_labels  = {'CCGP (accuracy, fixed threshold)', ...
-                'shCCGP (accuracy, optimal threshold)', ...
-                'Improvement (shCCGP - CCGP)'};
-perf_cells   = {acc_overall, shc_overall, imp_overall};
-perf_tags    = {'ccgp', 'shccgp', 'improv'};
-metric_idx_stats = 1:(1 + 2*double(plot_shCCGP));
+perf_labels  = {'CCGP (accuracy, fixed threshold)'};
+perf_cells   = {acc_overall};
+perf_tags    = {'ccgp'};
 
 all_contrasts  = cell(length(param.param2decode), length(perf_cells));
 lme_ccgp_info  = cell(length(param.param2decode), 1);   % saved for posthoc area tests
 
 for p = 1 : length(param.param2decode)
 
-    for metric = metric_idx_stats
+    for metric = 1
 
         perf_now = perf_cells{metric};
 
@@ -588,7 +423,6 @@ for p = 1 : length(param.param2decode)
         utils_diary(fid_log, '  %s  -  %s\n', param.param2decode{p}, perf_labels{metric});
         utils_diary(fid_log, '%s\n', repmat('=', 1, 72));
 
-        if metric < 4
         % Build long table for LME fits
         tab_Perf         = [];
         tab_TrainState   = {};
@@ -687,14 +521,9 @@ for p = 1 : length(param.param2decode)
             gainmod_est(ar) = xC' * coef_vals;
             gainmod_se(ar)  = sqrt(max(0, xC' * CovMat * xC));
 
-            % Generalization:
-            if metric < 3
-                xD = (x12 + x21) / 2;
-                genrz_est(ar) = xD' * coef_vals - 0.5;
-            else  % metric == 3: improvement off-diag - on-diag
-                xD = (x12 + x21)/2 - (x11 + x22)/2;
-                genrz_est(ar) = xD' * coef_vals;
-            end
+            % Generalization: mean(off-diag) - 0.5
+            xD = (x12 + x21) / 2;
+            genrz_est(ar) = xD' * coef_vals - 0.5;
             genrz_se(ar) = sqrt(max(0, xD' * CovMat * xD));
         end
 
@@ -720,12 +549,7 @@ for p = 1 : length(param.param2decode)
         utils_diary(fid_log, '%s', regexprep(evalc('disp(tbl_gainmod)'), '</?strong>', ''));
 
         utils_diary(fid_log, '\n');
-        if metric < 3
-            utils_diary(fid_log, '--- Generalization: mean(off-diag) - 0.5 ---\n');
-        else
-            utils_diary(fid_log, '--- Generalization (H2 test): Improvement_off-diag - Improvement_on-diag ---\n');
-            utils_diary(fid_log, '    Positive = threshold shift larger cross-state than within-state -> H2\n');
-        end
+        utils_diary(fid_log, '--- Generalization: mean(off-diag) - 0.5 ---\n');
         tbl_genrz = table(area2test_name', genrz_est, genrz_se, t_genrz, p_genrz, p_genrz_fdr, ...
             'VariableNames', {'Area','Est','SE','t','p_raw','p_FDR'});
         utils_diary(fid_log, '%s', regexprep(evalc('disp(tbl_genrz)'), '</?strong>', ''));
@@ -772,13 +596,8 @@ for p = 1 : length(param.param2decode)
                 rob_gainmod_est(ar_rob, n_idx) = xC' * coef_vals;
                 rob_gainmod_se(ar_rob, n_idx)  = sqrt(max(0, xC' * CovMat * xC));
 
-                if metric < 3
-                    xD = (x12 + x21) / 2;
-                    rob_genrz_est(ar_rob, n_idx) = xD' * coef_vals - 0.5;
-                else
-                    xD = (x12 + x21)/2 - (x11 + x22)/2;
-                    rob_genrz_est(ar_rob, n_idx) = xD' * coef_vals;
-                end
+                xD = (x12 + x21) / 2;
+                rob_genrz_est(ar_rob, n_idx) = xD' * coef_vals - 0.5;
                 rob_genrz_se(ar_rob, n_idx) = sqrt(max(0, xD' * CovMat * xD));
             end
         end
@@ -789,17 +608,13 @@ for p = 1 : length(param.param2decode)
         all_contrasts{p, metric}.rob_genrz_est = rob_genrz_est;  all_contrasts{p, metric}.rob_genrz_se = rob_genrz_se;
 
         % Save CCGP LME info for pairwise area posthoc
-        if metric == 1
-            lme_ccgp_info{p}.coef_names = coef_names;
-            lme_ccgp_info{p}.coef_vals  = coef_vals;
-            lme_ccgp_info{p}.CovMat     = CovMat;
-            lme_ccgp_info{p}.dfe        = dfe;
-            lme_ccgp_info{p}.ref_train  = ref_train;
-            lme_ccgp_info{p}.ref_test   = ref_test;
-            lme_ccgp_info{p}.ref_area   = ref_area;
-        end
-
-        end  % if metric < 4
+        lme_ccgp_info{p}.coef_names = coef_names;
+        lme_ccgp_info{p}.coef_vals  = coef_vals;
+        lme_ccgp_info{p}.CovMat     = CovMat;
+        lme_ccgp_info{p}.dfe        = dfe;
+        lme_ccgp_info{p}.ref_train  = ref_train;
+        lme_ccgp_info{p}.ref_test   = ref_test;
+        lme_ccgp_info{p}.ref_area   = ref_area;
 
     end  % metric loop
 
@@ -811,688 +626,179 @@ fclose(fid_log);
 %
 % For each parameter:
 %   Fig A - CCGP 2x2 heatmaps + geometry specificity + gain modulation
-%   Fig B - shCCGP 2x2 heatmaps + geometry specificity + gain modulation
-%   Fig C - Improvement 2x2 heatmaps + generalization (H2 test) bar chart
+%   Fig B - CCGP generalization bar chart
 
 for p = 1 : length(param.param2decode)
 
     param_name = strrep(param.param2decode{p}, '_2AFC', '');
     fig_ttl    = strrep(param.param2decode{p}, '_', ' ');
 
-    metric_names = {'CCGP', 'shCCGP', 'Improvement'};
-    metric_idx_fig = 1:(1 + 2*double(plot_shCCGP));
+    metric_names = {'CCGP'};
 
-    for metric = metric_idx_fig
+    for metric = 1
 
         ct = all_contrasts{p, metric};
         mu_now = ct.mu;
 
-        % Heatmap + geometry specificity + gain modulation composite (for CCGP and shCCGP)
-        if metric <= 2
+        % Heatmap + geometry specificity + gain modulation composite
+        fig_main = figure('Position', [358   329   841   750], 'Color', 'w');
 
-            fig_main = figure('Position', [358   329   841   750], 'Color', 'w');
+        % --- Layout for 9 heatmaps plus two contrast bar panels ---
+        ml = 0.030; mr = 0.018; mt = 0.09; mb = 0.10;
+        rw = 0.25; gap_mid = 0.035; bc_gap = 0.07;
+        rx = 1 - mr - rw;
+        rh = (1 - mt - mb - bc_gap) / 2;
+        ax_gainmod_fig = axes('Parent', fig_main, 'Units', 'normalized', ...
+                        'Position', [rx, mb + rh + bc_gap, rw, rh]);
+        ax_geomspec_fig = axes('Parent', fig_main, 'Units', 'normalized', ...
+                        'Position', [rx, mb, rw, rh]);
 
-            % --- Layout for 9 heatmaps plus two contrast bar panels ---
-            ml = 0.030; mr = 0.018; mt = 0.09; mb = 0.10;
-            rw = 0.25; gap_mid = 0.035; bc_gap = 0.07;
-            rx = 1 - mr - rw;
-            rh = (1 - mt - mb - bc_gap) / 2;
-            ax_gainmod_fig = axes('Parent', fig_main, 'Units', 'normalized', ...
-                            'Position', [rx, mb + rh + bc_gap, rw, rh]);
-            ax_geomspec_fig = axes('Parent', fig_main, 'Units', 'normalized', ...
-                            'Position', [rx, mb, rw, rh]);
+        lw = rx - gap_mid - ml;
+        nhm_c = 3; nhm_r = 3;
+        hm_gap_x = 0.020; hm_gap_y = 0.055; cb_h = 0.022; cb_gap = 0.032;
+        hm_w = (lw  - hm_gap_x*(nhm_c-1)) / nhm_c;
+        hm_h = (1 - mt - mb - cb_h - cb_gap - hm_gap_y*(nhm_r-1)) / nhm_r;
 
-            lw = rx - gap_mid - ml;
-            nhm_c = 3; nhm_r = 3;
-            hm_gap_x = 0.020; hm_gap_y = 0.055; cb_h = 0.022; cb_gap = 0.032;
-            hm_w = (lw  - hm_gap_x*(nhm_c-1)) / nhm_c;
-            hm_h = (1 - mt - mb - cb_h - cb_gap - hm_gap_y*(nhm_r-1)) / nhm_r;
+        caxis_lim = [min(0.45, min(mu_now(:))) max(mu_now(:)) + 0.01];
 
-            % Set color axis: CCGP/shCCGP = auto, Improvement = [-0.15 0.15]
-            if metric == 3
-                caxis_lim = [-0.15 0.15];
-            else
-                caxis_lim = [min(0.45, min(mu_now(:))) max(mu_now(:)) + 0.01];
-            end
-
-            hm_order = [1 2 3 9 8 4 7 6 5];
-            for hm_idx = 1 : nAreas
-                ar = hm_order(hm_idx);
-                ar_row = floor((hm_idx-1)/nhm_c);
-                ar_col = mod(hm_idx-1, nhm_c);
-                ax_x = ml + ar_col * (hm_w + hm_gap_x);
-                ax_y = mb + cb_h + cb_gap + (nhm_r-1 - ar_row) * (hm_h + hm_gap_y);
-                ax_hm = axes('Parent', fig_main, 'Units', 'normalized', ...
-                             'Position', [ax_x, ax_y, hm_w, hm_h]);
-                mat2x2 = [mu_now(ar,1) mu_now(ar,2); mu_now(ar,3) mu_now(ar,4)];
-                imagesc(ax_hm, mat2x2, caxis_lim);
-                colormap(ax_hm, flipud(hot(256)));
-                is_bottom = (ar_row == nhm_r-1); is_left = (ar_col == 0);
-                if is_bottom, set(ax_hm, 'XTick', [1 2], 'XTickLabel', {'C','U'}, 'FontSize', 11);
-                else,          set(ax_hm, 'XTick', [1 2], 'XTickLabel', {}, 'FontSize', 11); end
-                if is_left,   set(ax_hm, 'YTick', [1 2], 'YTickLabel', {'C','U'}, 'FontSize', 11);
-                else,          set(ax_hm, 'YTick', [1 2], 'YTickLabel', {}, 'FontSize', 11); end
-                set(ax_hm, 'TickLength', [0 0]);
-                if is_bottom, xlabel(ax_hm, 'Test state', 'FontSize', 12); end
-                if is_left,   ylabel(ax_hm, 'Train state', 'FontSize', 12); end
-                title(ax_hm, area2test_name{ar}, 'Color', colorareas(ar,:)/255, ...
-                      'FontWeight', 'bold', 'FontSize', 13);
-                for rr = 1:2
-                    for cc_idx = 1:2
-                        v = mat2x2(rr, cc_idx);
-                        text(ax_hm, cc_idx, rr, sprintf('%.3f', v), ...
-                             'HorizontalAlignment', 'center', 'FontSize', 10, 'FontWeight', 'bold', ...
-                             'Color', [1 1 1] * (v > mean(caxis_lim)));
-                    end
+        hm_order = [1 2 3 9 8 4 7 6 5];
+        for hm_idx = 1 : nAreas
+            ar = hm_order(hm_idx);
+            ar_row = floor((hm_idx-1)/nhm_c);
+            ar_col = mod(hm_idx-1, nhm_c);
+            ax_x = ml + ar_col * (hm_w + hm_gap_x);
+            ax_y = mb + cb_h + cb_gap + (nhm_r-1 - ar_row) * (hm_h + hm_gap_y);
+            ax_hm = axes('Parent', fig_main, 'Units', 'normalized', ...
+                         'Position', [ax_x, ax_y, hm_w, hm_h]);
+            mat2x2 = [mu_now(ar,1) mu_now(ar,2); mu_now(ar,3) mu_now(ar,4)];
+            imagesc(ax_hm, mat2x2, caxis_lim);
+            colormap(ax_hm, flipud(hot(256)));
+            is_bottom = (ar_row == nhm_r-1); is_left = (ar_col == 0);
+            if is_bottom, set(ax_hm, 'XTick', [1 2], 'XTickLabel', {'C','U'}, 'FontSize', 11);
+            else,          set(ax_hm, 'XTick', [1 2], 'XTickLabel', {}, 'FontSize', 11); end
+            if is_left,   set(ax_hm, 'YTick', [1 2], 'YTickLabel', {'C','U'}, 'FontSize', 11);
+            else,          set(ax_hm, 'YTick', [1 2], 'YTickLabel', {}, 'FontSize', 11); end
+            set(ax_hm, 'TickLength', [0 0]);
+            if is_bottom, xlabel(ax_hm, 'Test state', 'FontSize', 12); end
+            if is_left,   ylabel(ax_hm, 'Train state', 'FontSize', 12); end
+            title(ax_hm, area2test_name{ar}, 'Color', colorareas(ar,:)/255, ...
+                  'FontWeight', 'bold', 'FontSize', 13);
+            for rr = 1:2
+                for cc_idx = 1:2
+                    v = mat2x2(rr, cc_idx);
+                    text(ax_hm, cc_idx, rr, sprintf('%.3f', v), ...
+                         'HorizontalAlignment', 'center', 'FontSize', 10, 'FontWeight', 'bold', ...
+                         'Color', [1 1 1] * (v > mean(caxis_lim)));
                 end
             end
+        end
 
 
-            ax_cb = axes('Parent', fig_main, 'Units', 'normalized', ...
-                         'Position', [ml, mb, lw, cb_h], 'Visible', 'off');
-            colormap(ax_cb, flipud(hot(256))); clim(ax_cb, caxis_lim);
-            cb = colorbar(ax_cb, 'Location', 'South', 'AxisLocation', 'out');
-            cb.Position = [ml, mb, lw, cb_h];
-            if metric == 3
-                cb.Label.String = 'shCCGP shift';
-            else
-                cb.Label.String = 'Decoding accuracy';
+        ax_cb = axes('Parent', fig_main, 'Units', 'normalized', ...
+                     'Position', [ml, mb, lw, cb_h], 'Visible', 'off');
+        colormap(ax_cb, flipud(hot(256))); clim(ax_cb, caxis_lim);
+        cb = colorbar(ax_cb, 'Location', 'South', 'AxisLocation', 'out');
+        cb.Position = [ml, mb, lw, cb_h];
+        cb.Label.String = 'Decoding accuracy';
+        cb.Label.FontSize = 12;
+        cb.FontSize = 11; cb.TickLength = 0.02;
+
+        annotation(fig_main, 'textbox', [0 0.93 1 0.06], ...
+            'String', [metric_names{metric} ' - ' fig_ttl], ...
+            'EdgeColor', 'none', 'HorizontalAlignment', 'center', ...
+            'FontSize', 20, 'FontWeight', 'bold');
+
+        % Geometry specificity
+        [~, sidx_geomspec] = sort(ct.geomspec_est, 'descend');
+        hold(ax_geomspec_fig, 'on');
+        for kk = 1 : nAreas
+            ii = sidx_geomspec(kk); col = colorareas(ii,:)/255;
+            if ct.p_geomspec_fdr(ii) >= fdr_alpha, col = col*0.5+0.5; end
+            bar(ax_geomspec_fig, kk, ct.geomspec_est(ii), 'FaceColor', col, 'EdgeColor', 'none');
+            errorbar(ax_geomspec_fig, kk, ct.geomspec_est(ii), 1.96*ct.geomspec_se(ii), 'k.', 'LineWidth', 1.5);
+            if ct.p_geomspec_fdr(ii) < fdr_alpha
+                text(ax_geomspec_fig, kk, ct.geomspec_est(ii)+sign(ct.geomspec_est(ii))*(1.96*ct.geomspec_se(ii)+0.003), ...
+                     '*', 'HorizontalAlignment', 'center', 'FontSize', 14, 'FontWeight', 'bold');
             end
-            cb.Label.FontSize = 12;
-            cb.FontSize = 11; cb.TickLength = 0.02;
+        end
+        set(ax_geomspec_fig, 'XTick', 1:nAreas, 'XTickLabel', area2test_name(sidx_geomspec), 'FontSize', 11);
+        xtickangle(ax_geomspec_fig, 45);
+        ylabel(ax_geomspec_fig, 'LME estimate', 'FontSize', 12);
+        title(ax_geomspec_fig, 'Geometry specificity', 'FontSize', 13, 'FontWeight', 'bold');
+        yline(ax_geomspec_fig, 0, 'k--', 'LineWidth', 1); box(ax_geomspec_fig, 'off'); hold(ax_geomspec_fig, 'off');
 
-            annotation(fig_main, 'textbox', [0 0.93 1 0.06], ...
-                'String', [metric_names{metric} ' - ' fig_ttl], ...
-                'EdgeColor', 'none', 'HorizontalAlignment', 'center', ...
-                'FontSize', 20, 'FontWeight', 'bold');
-
-            % Geometry specificity
-            [~, sidx_geomspec] = sort(ct.geomspec_est, 'descend');
-            hold(ax_geomspec_fig, 'on');
-            for kk = 1 : nAreas
-                ii = sidx_geomspec(kk); col = colorareas(ii,:)/255;
-                if ct.p_geomspec_fdr(ii) >= fdr_alpha, col = col*0.5+0.5; end
-                bar(ax_geomspec_fig, kk, ct.geomspec_est(ii), 'FaceColor', col, 'EdgeColor', 'none');
-                errorbar(ax_geomspec_fig, kk, ct.geomspec_est(ii), 1.96*ct.geomspec_se(ii), 'k.', 'LineWidth', 1.5);
-                if ct.p_geomspec_fdr(ii) < fdr_alpha
-                    text(ax_geomspec_fig, kk, ct.geomspec_est(ii)+sign(ct.geomspec_est(ii))*(1.96*ct.geomspec_se(ii)+0.003), ...
-                         '*', 'HorizontalAlignment', 'center', 'FontSize', 14, 'FontWeight', 'bold');
-                end
+        % Gain modulation
+        [~, sidx_gainmod] = sort(ct.gainmod_est, 'descend');
+        hold(ax_gainmod_fig, 'on');
+        for kk = 1 : nAreas
+            ii = sidx_gainmod(kk); col = colorareas(ii,:)/255;
+            if ct.p_gainmod_fdr(ii) >= fdr_alpha, col = col*0.5+0.5; end
+            bar(ax_gainmod_fig, kk, ct.gainmod_est(ii), 'FaceColor', col, 'EdgeColor', 'none');
+            errorbar(ax_gainmod_fig, kk, ct.gainmod_est(ii), 1.96*ct.gainmod_se(ii), 'k.', 'LineWidth', 1.5);
+            if ct.p_gainmod_fdr(ii) < fdr_alpha
+                text(ax_gainmod_fig, kk, ct.gainmod_est(ii)+sign(ct.gainmod_est(ii))*(1.96*ct.gainmod_se(ii)+0.003), ...
+                     '*', 'HorizontalAlignment', 'center', 'FontSize', 14, 'FontWeight', 'bold');
             end
-            set(ax_geomspec_fig, 'XTick', 1:nAreas, 'XTickLabel', area2test_name(sidx_geomspec), 'FontSize', 11);
-            xtickangle(ax_geomspec_fig, 45);
-            ylabel(ax_geomspec_fig, 'LME estimate', 'FontSize', 12);
-            title(ax_geomspec_fig, 'Geometry specificity', 'FontSize', 13, 'FontWeight', 'bold');
-            yline(ax_geomspec_fig, 0, 'k--', 'LineWidth', 1); box(ax_geomspec_fig, 'off'); hold(ax_geomspec_fig, 'off');
+        end
+        set(ax_gainmod_fig, 'XTick', 1:nAreas, 'XTickLabel', area2test_name(sidx_gainmod), 'FontSize', 11);
+        xtickangle(ax_gainmod_fig, 45);
+        ylabel(ax_gainmod_fig, 'LME estimate', 'FontSize', 12);
+        title(ax_gainmod_fig, 'Gain modulation', 'FontSize', 13, 'FontWeight', 'bold');
+        yline(ax_gainmod_fig, 0, 'k--', 'LineWidth', 1); box(ax_gainmod_fig, 'off'); hold(ax_gainmod_fig, 'off');
 
-            % Gain modulation
-            [~, sidx_gainmod] = sort(ct.gainmod_est, 'descend');
-            hold(ax_gainmod_fig, 'on');
-            for kk = 1 : nAreas
-                ii = sidx_gainmod(kk); col = colorareas(ii,:)/255;
-                if ct.p_gainmod_fdr(ii) >= fdr_alpha, col = col*0.5+0.5; end
-                bar(ax_gainmod_fig, kk, ct.gainmod_est(ii), 'FaceColor', col, 'EdgeColor', 'none');
-                errorbar(ax_gainmod_fig, kk, ct.gainmod_est(ii), 1.96*ct.gainmod_se(ii), 'k.', 'LineWidth', 1.5);
-                if ct.p_gainmod_fdr(ii) < fdr_alpha
-                    text(ax_gainmod_fig, kk, ct.gainmod_est(ii)+sign(ct.gainmod_est(ii))*(1.96*ct.gainmod_se(ii)+0.003), ...
-                         '*', 'HorizontalAlignment', 'center', 'FontSize', 14, 'FontWeight', 'bold');
-                end
-            end
-            set(ax_gainmod_fig, 'XTick', 1:nAreas, 'XTickLabel', area2test_name(sidx_gainmod), 'FontSize', 11);
-            xtickangle(ax_gainmod_fig, 45);
-            ylabel(ax_gainmod_fig, 'LME estimate', 'FontSize', 12);
-            title(ax_gainmod_fig, 'Gain modulation', 'FontSize', 13, 'FontWeight', 'bold');
-            yline(ax_gainmod_fig, 0, 'k--', 'LineWidth', 1); box(ax_gainmod_fig, 'off'); hold(ax_gainmod_fig, 'off');
-
-            drawnow;
-            % Keep manuscript names for CCGP main panels while preserving
-            % generic naming for all other metrics.
-            if metric == 1 && strcmp(param_name, 'chosenflavor')
-                fname_main = [report_dir 'Fig_3c_CCGP.png'];
-            elseif metric == 1 && strcmp(param_name, 'chosenside')
-                fname_main = [report_dir 'Fig_3d_CCGP.png'];
-            else
-                fname_main = [report_dir 'Fig_main_' metric_names{metric} '_' param_name '.png'];
-            end
-            saveas(fig_main, fname_main);
-            fprintf('  Saved: %s\n', fname_main);
-
-        elseif metric == 3
-            % Improvement heatmaps + generalization bar
-            fig_improv = figure('Position', [50 50 1600 700], 'Color', 'w');
-            tl = tiledlayout(fig_improv, 3, 4, 'TileSpacing', 'compact', 'Padding', 'compact');
-            title(tl, ['shCCGP - CCGP Improvement (H2 test) - ' fig_ttl], ...
-                  'FontSize', 20, 'FontWeight', 'bold');
-
-            % Generalization bar (H2 test): create FIRST so it claims column 4 (tiles 4, 8, 12)
-            % before the heatmap loop fills the remaining tiles.
-            ax_genrz_fig = nexttile(4, [3 1]);
-            [~, sidx_genrz] = sort(ct.genrz_est, 'descend');
-            hold(ax_genrz_fig, 'on');
-            for kk = 1 : nAreas
-                ii = sidx_genrz(kk); col = colorareas(ii,:)/255;
-                if ct.p_genrz_fdr(ii) >= fdr_alpha, col = col*0.5+0.5; end
-                bar(ax_genrz_fig, kk, ct.genrz_est(ii), 'FaceColor', col, 'EdgeColor', 'none');
-                errorbar(ax_genrz_fig, kk, ct.genrz_est(ii), 1.96*ct.genrz_se(ii), 'k.', 'LineWidth', 1.5);
-                if ct.p_genrz_fdr(ii) < fdr_alpha
-                    text(ax_genrz_fig, kk, ct.genrz_est(ii)+sign(ct.genrz_est(ii))*(1.96*ct.genrz_se(ii)+0.002), ...
-                         '*', 'HorizontalAlignment', 'center', 'FontSize', 14, 'FontWeight', 'bold');
-                end
-            end
-            set(ax_genrz_fig, 'XTick', 1:nAreas, 'XTickLabel', area2test_name(sidx_genrz), 'FontSize', 12);
-            xtickangle(ax_genrz_fig, 45);
-            ylabel(ax_genrz_fig, 'Improvement off-diag - on-diag (LME)', 'FontSize', 13);
-            title(ax_genrz_fig, 'Generalization of Improvement (H2 test)', 'FontSize', 14, 'FontWeight', 'bold');
-            yline(ax_genrz_fig, 0, 'k--', 'LineWidth', 1.5); box(ax_genrz_fig, 'off'); hold(ax_genrz_fig, 'off');
-
-            % 9 heatmaps in the first 3 columns (tiles 1-3, 5-7, 9-11)
-            hm_tiles  = [1 2 3 5 6 7 9 10 11];
-            hm_order = [1 2 3 9 8 4 7 6 5];
-
-            clim_imp = [0 0.15]; % improvement: shCCGP - CCGP
-            cmap_imp = flipud(gray(256));
-
-            for hm_idx = 1 : nAreas
-                ar = hm_order(hm_idx);
-                ax_hm = nexttile(hm_tiles(hm_idx));
-                mat2x2 = [mu_now(ar,1) mu_now(ar,2); mu_now(ar,3) mu_now(ar,4)];
-                imagesc(ax_hm, mat2x2, clim_imp);
-                colormap(ax_hm, cmap_imp);
-                set(ax_hm, 'XTick', [1 2], 'XTickLabel', {'C','U'}, ...
-                         'YTick', [1 2], 'YTickLabel', {'C','U'}, ...
-                         'TickLength', [0 0], 'FontSize', 11);
-                xlabel(ax_hm, 'Test'); ylabel(ax_hm, 'Train');
-                title(ax_hm, area2test_name{ar}, 'Color', colorareas(ar,:)/255, ...
-                      'FontWeight', 'bold', 'FontSize', 12);
-                % Text color: black if abs(value) < 0.08, else white (centered at 0)
-                for rr = 1:2
-                    for cc_idx = 1:2
-                        v = mat2x2(rr, cc_idx);
-                        if abs(v) < 0.08
-                            txt_col = [0 0 0];
-                        else
-                            txt_col = [1 1 1];
-                        end
-                        text(ax_hm, cc_idx, rr, sprintf('%.3f', v), ...
-                             'HorizontalAlignment', 'center', 'FontSize', 9, ...
-                             'FontWeight', 'bold', 'Color', txt_col);
-                    end
-                end
-            end  % heatmap loop
-
-            % Add colorbar below all heatmaps
-            cb_ax = axes('Parent', fig_improv, 'Position', [0.08, 0.08, 0.62, 0.025], 'Visible', 'off');
-            colormap(cb_ax, cmap_imp); caxis(cb_ax, clim_imp);
-            cb = colorbar(cb_ax, 'Location', 'South', 'AxisLocation', 'out');
-            cb.Position = [0.08, 0.08, 0.62, 0.025];
-            cb.Label.String = 'shCCGP shift';
-            cb.Label.FontSize = 12;
-            cb.FontSize = 11; cb.TickLength = 0.02;
-
-            drawnow;
-            saveas(fig_improv, [report_dir 'Fig_' metric_names{metric} '_' param_name '.png']);
-            fprintf('  Saved: Fig_%s_%s.png\n', metric_names{metric}, param_name);
-
-        end  % metric figure branch
+        drawnow;
+        if metric == 1 && strcmp(param_name, 'chosenflavor')
+            fname_main = [report_dir 'Fig_3c_CCGP.png'];
+        elseif metric == 1 && strcmp(param_name, 'chosenside')
+            fname_main = [report_dir 'Fig_3d_CCGP.png'];
+        else
+            fname_main = [report_dir 'Fig_main_' metric_names{metric} '_' param_name '.png'];
+        end
+        saveas(fig_main, fname_main);
+        fprintf('  Saved: %s\n', fname_main);
 
     end  % metric
 
-    if plot_toggle_enabled(plot_shCCGP)
-        % Summary: generalization(CCGP), generalization(shCCGP), generalization(Improvement), scatter geomspec_shCCGP vs geomspec_CCGP
-        % Panel 4: scatter of LME-estimated geomspec_shCCGP (y) vs geomspec_CCGP (x) per area.
-        % No division -> no instability.  Areas near origin = weak geometry specificity (correctly
-        % uninterpretable).  Reference line y=x = no recovery; y=0 = complete recovery.
-        % Iso-recovery lines at 25 / 50 / 75 % to guide interpretation of points away diagonal
-        fig_sum = figure('Position', [50 50 2400 650], 'Color', 'w');
-        tl_sum = tiledlayout(fig_sum, 1, 4, 'TileSpacing', 'loose', 'Padding', 'compact');
-        title(tl_sum, ['Cross-state generalization - ' fig_ttl], 'FontSize', 26, 'FontWeight', 'bold');
-
-        % Panels 1-3: Generalization for each metric
-        panel_labels = {'CCGP - chance', 'shCCGP - chance', 'Improvement (H2 test)'};
-        for metric = 1 : 3
-            ct = all_contrasts{p, metric};
-            ax_s = nexttile(metric);
-            [~, sidx_genrz] = sort(ct.genrz_est, 'descend');
-            hold(ax_s, 'on');
-            for kk = 1 : nAreas
-                ii = sidx_genrz(kk); col = colorareas(ii,:)/255;
-                if ct.p_genrz_fdr(ii) >= fdr_alpha, col = col*0.5+0.5; end
-                bar(ax_s, kk, ct.genrz_est(ii), 'FaceColor', col, 'EdgeColor', 'none');
-                errorbar(ax_s, kk, ct.genrz_est(ii), 1.96*ct.genrz_se(ii), 'k.', 'LineWidth', 1.5);
-                if ct.p_genrz_fdr(ii) < fdr_alpha
-                    text(ax_s, kk, ct.genrz_est(ii)+sign(ct.genrz_est(ii))*(1.96*ct.genrz_se(ii)+0.003), ...
-                         '*', 'HorizontalAlignment', 'center', 'FontSize', 20, 'FontWeight', 'bold');
-                end
-            end
-            set(ax_s, 'XTick', 1:nAreas, 'XTickLabel', area2test_name(sidx_genrz), 'FontSize', 16);
-            xtickangle(ax_s, 45);
-            ylabel(ax_s, panel_labels{metric}, 'FontSize', 17);
-            title(ax_s, [metric_names{metric} ' - Generalization'], 'FontSize', 18, 'FontWeight', 'bold');
-            yline(ax_s, 0, 'k--', 'LineWidth', 1.2); box(ax_s, 'off'); hold(ax_s, 'off');
+    % CCGP generalization bar
+    ct = all_contrasts{p, 1};
+    fig_genrz = figure('Name', ['CCGP Generalization - ' fig_ttl], ...
+                       'Position', [80 240 450 450], 'Color', 'w');
+    ax_genrz = axes(fig_genrz);
+    [~, sidx_genrz] = sort(ct.genrz_est, 'descend');
+    hold(ax_genrz, 'on');
+    for kk = 1 : nAreas
+        ii = sidx_genrz(kk);
+        col = colorareas(ii,:) / 255;
+        if ct.p_genrz_fdr(ii) >= fdr_alpha
+            col = col * 0.5 + 0.5;
         end
-
-        % Panel 4: geomspec_shCCGP vs geomspec_CCGP scatter - geometry specificity before/after optimal shift
-        % x = geomspec_CCGP  (specificity at fixed threshold = baseline)
-        % y = geomspec_shCCGP (specificity at optimal threshold = after shift)
-        % y = x     -> no recovery (pure rotation / scaling)
-        % y = 0     -> complete recovery (pure bias shift)
-        % y = (1-r)*x for r = 0.25 / 0.50 / 0.75 = iso-recovery lines
-        ct_ccgp   = all_contrasts{p, 1};   % metric 1: CCGP
-        ct_shccgp = all_contrasts{p, 2};   % metric 2: shCCGP
-        ct_imp    = all_contrasts{p, 3};   % metric 3: Improvement
-        % Significance of deviation from diagonal: geomspec_Improvement = geomspec_shCCGP - geomspec_CCGP
-        % Negative & FDR-significant -> point lies below y=x -> geometry specificity reduced -> recovery
-        geomspec_ccgp   = ct_ccgp.geomspec_est;
-        geomspec_shccgp = ct_shccgp.geomspec_est;
-        se_geomspec_ccgp  = ct_ccgp.geomspec_se;
-        se_geomspec_shccgp = ct_shccgp.geomspec_se;
-        p_diag_fdr = ct_imp.p_geomspec_fdr;   % FDR p for geomspec_Improvement ≠ 0 (= deviation from diagonal)
-
-        ax_s4 = nexttile(4);
-        hold(ax_s4, 'on');
-        set(ax_s4, 'FontSize', 15);
-
-        % Axis range: include error bars so nothing is clipped
-        ax_max = max([geomspec_ccgp + 1.96*se_geomspec_ccgp; geomspec_shccgp + 1.96*se_geomspec_shccgp; 0.02]) * 1.18;
-        ax_max = max(ax_max, 0.02);
-        ax_min = min([geomspec_ccgp - 1.96*se_geomspec_ccgp; geomspec_shccgp - 1.96*se_geomspec_shccgp; -0.005]) * 1.1;
-
-        % Reference lines
-        plot(ax_s4, [0 ax_max], [0 ax_max],   'k-',  'LineWidth', 1.2, 'HandleVisibility', 'off');  % y=x (no recovery)
-        plot(ax_s4, [0 ax_max], [0 0],        'k--', 'LineWidth', 1.0, 'HandleVisibility', 'off');  % y=0 (full recovery)
-        % Iso-recovery lines: 25%, 50%, 75%
-        rec_levels  = [0.25 0.50 0.75];
-        rec_colors  = {[0.75 0.75 0.75], [0.55 0.55 0.55], [0.35 0.35 0.35]};
-        rec_labels  = {'25%', '50%', '75%'};
-        for ri = 1 : 3
-            yl = (1 - rec_levels(ri)) * ax_max;
-            plot(ax_s4, [0 ax_max], [0 yl], '--', 'Color', rec_colors{ri}, 'LineWidth', 0.8, ...
-                 'HandleVisibility', 'off');
-            text(ax_s4, ax_max * 0.98, yl * 0.98, rec_labels{ri}, ...
-                 'Color', rec_colors{ri}, 'FontSize', 14, 'HorizontalAlignment', 'right');
+        bar(ax_genrz, kk, ct.genrz_est(ii), 'FaceColor', col, 'EdgeColor', 'none');
+        errorbar(ax_genrz, kk, ct.genrz_est(ii), 1.96 * ct.genrz_se(ii), 'k.', 'LineWidth', 1.5);
+        if ct.p_genrz_fdr(ii) < fdr_alpha
+            text(ax_genrz, kk, ct.genrz_est(ii) + sign(ct.genrz_est(ii)) * (1.96 * ct.genrz_se(ii) + 0.003), ...
+                 '*', 'HorizontalAlignment', 'center', 'FontSize', 20, 'FontWeight', 'bold');
         end
-        text(ax_s4, ax_max * 0.98, ax_max * 0.98, 'no recovery', ...
-             'FontSize', 14, 'HorizontalAlignment', 'right', 'Color', [0 0 0]);
-        text(ax_s4, ax_max * 0.98, ax_max * 0.015, 'full recovery', ...
-             'FontSize', 14, 'HorizontalAlignment', 'right', 'Color', [0 0 0]);
-
-        % Area scatter points with error bars
-        % Colour: saturated if geomspec_CCGP is significant (has real geometry specificity).
-        % Star (*): geomspec_Improvement FDR-significant = point deviates from diagonal = recovery.
-        for ar = 1 : nAreas
-            col = colorareas(ar,:) / 255;
-            if ct_ccgp.p_geomspec_fdr(ar) >= fdr_alpha, col = col*0.4 + 0.6; end
-            errorbar(ax_s4, geomspec_ccgp(ar), geomspec_shccgp(ar), ...
-                     1.96*se_geomspec_shccgp(ar), 1.96*se_geomspec_shccgp(ar), ...
-                     1.96*se_geomspec_ccgp(ar),  1.96*se_geomspec_ccgp(ar), ...
-                     'o', 'Color', col, 'MarkerFaceColor', col, ...
-                     'MarkerSize', 8, 'LineWidth', 1.2, 'CapSize', 4);
-            lbl = area2test_name{ar};
-            if p_diag_fdr(ar) < fdr_alpha
-                lbl = [lbl '*'];   % deviation from diagonal = significant recovery
-            end
-            text(ax_s4, geomspec_ccgp(ar), geomspec_shccgp(ar) + ax_max*0.03, lbl, ...
-                 'Color', col, 'FontSize', 15, 'HorizontalAlignment', 'center', 'FontWeight', 'bold');
-        end
-
-        xlim(ax_s4, [ax_min  ax_max]);
-        ylim(ax_s4, [ax_min  ax_max]);
-        axis(ax_s4, 'square');
-        xlabel(ax_s4, 'Geometry specificity (CCGP, fixed \delta)', 'FontSize', 16);
-        ylabel(ax_s4, 'Geometry specificity (shCCGP, optimal \delta)', 'FontSize', 16);
-        title(ax_s4, 'Geometry specificity: before vs after optimal shift', 'FontSize', 18, 'FontWeight', 'bold');
-        box(ax_s4, 'off');  hold(ax_s4, 'off');
-
-        drawnow;
-        if strcmp(param_name, 'chosenflavor')
-            fname_genrz = [report_dir 'Fig_S6b_generalization.png'];
-        elseif strcmp(param_name, 'chosenside')
-            fname_genrz = [report_dir 'Fig_S6c_generalization.png'];
-        else
-            fname_genrz = [report_dir 'Fig_genrz_summary_' param_name '.png'];
-        end
-        saveas(fig_sum, fname_genrz);
-        fprintf('  Saved: %s\n', fname_genrz);
-
-        % Recovery vs N: geomspec_CCGP and geomspec_shCCGP on same axes
-        % Plots the two geometry-specificity estimates per area as a function of N.
-        % Gap between solid (CCGP) and dashed (shCCGP) line = recovery.
-        % No division -> no denominator noise.  Gap shaded in area colour.
-        ct1_rob = all_contrasts{p, 1};
-        ct2_rob = all_contrasts{p, 2};
-        if isfield(ct1_rob, 'rob_geomspec_est') && isfield(ct2_rob, 'rob_geomspec_est')
-            N_rob_vec    = ct1_rob.N_evals_rob;
-            LogN_rob_vec = log2(N_rob_vec);
-
-            bB1  = ct1_rob.rob_geomspec_est;   % [nAreas x n_N_r]  CCGP
-            bB2  = ct2_rob.rob_geomspec_est;   % [nAreas x n_N_r]  shCCGP
-
-            rob_tick_N_traj = [50 100 200 500];
-            rob_tick_N_traj = rob_tick_N_traj(rob_tick_N_traj <= max(N_rob_vec));
-
-            fig_traj = figure('Name', ['Geometry specificity vs N - ' fig_ttl], ...
-                              'Position', [50 50 1100 700], 'Color', 'w');
-            ax_tr = axes(fig_traj);
-            hold(ax_tr, 'on');
-            set(ax_tr, 'FontSize', 16);
-
-            yline(ax_tr, 0, 'k--', 'LineWidth', 1.2, 'HandleVisibility', 'off');
-            xline(ax_tr, log2(N_eval_global), 'Color', [0.4 0.4 0.4], ...
-                  'LineStyle', ':', 'LineWidth', 2, 'HandleVisibility', 'off');
-
-            for ar = 1 : nAreas
-                col = colorareas(ar,:) / 255;
-                v1 = bB1(ar,:);
-                v2 = bB2(ar,:);
-
-                % CCGP: solid line
-                plot(ax_tr, LogN_rob_vec, v1, '-',  'Color', col, 'LineWidth', 2.5, ...
-                     'DisplayName', area2test_name{ar});
-
-                % shCCGP: dashed line
-                plot(ax_tr, LogN_rob_vec, v2, '--', 'Color', col, 'LineWidth', 2.0, ...
-                     'HandleVisibility', 'off');
-            end
-
-            set(ax_tr, 'XTick', log2(rob_tick_N_traj), ...
-                       'XTickLabel', arrayfun(@num2str, rob_tick_N_traj, 'UniformOutput', false));
-            xlim(ax_tr, [log2(min(N_rob_vec)*0.85)  log2(max(N_rob_vec)*1.1)]);
-            xlabel(ax_tr, 'Pseudopop size  N', 'FontSize', 18);
-            ylabel(ax_tr, 'Geometry specificity', 'FontSize', 18);
-            title(ax_tr, ['Geom. specificity: CCGP (-) vs shCCGP (- -) per area  -  ' fig_ttl], ...
-                  'FontSize', 18, 'FontWeight', 'bold');
-            % Manual legend note
-            text(ax_tr, log2(min(N_rob_vec)*0.87), 0, ...
-                 '  solid = CCGP   dashed = shCCGP   gap = recovery', ...
-                 'FontSize', 12, 'Color', [0.4 0.4 0.4], 'VerticalAlignment', 'bottom');
-            legend(ax_tr, 'Location', 'best', 'FontSize', 13);
-            box(ax_tr, 'off');  hold(ax_tr, 'off');
-
-            drawnow;
-            saveas(fig_traj, [report_dir 'Fig_geomspec_recovery_' param_name '.png']);
-            fprintf('  Saved: Fig_geomspec_recovery_%s.png\n', param_name);
-        end
-    else
-        ct = all_contrasts{p, 1};
-        fig_genrz = figure('Name', ['CCGP Generalization - ' fig_ttl], ...
-                           'Position', [80 240 450 450], 'Color', 'w');
-        ax_genrz = axes(fig_genrz);
-        [~, sidx_genrz] = sort(ct.genrz_est, 'descend');
-        hold(ax_genrz, 'on');
-        for kk = 1 : nAreas
-            ii = sidx_genrz(kk);
-            col = colorareas(ii,:) / 255;
-            if ct.p_genrz_fdr(ii) >= fdr_alpha
-                col = col * 0.5 + 0.5;
-            end
-            bar(ax_genrz, kk, ct.genrz_est(ii), 'FaceColor', col, 'EdgeColor', 'none');
-            errorbar(ax_genrz, kk, ct.genrz_est(ii), 1.96 * ct.genrz_se(ii), 'k.', 'LineWidth', 1.5);
-            if ct.p_genrz_fdr(ii) < fdr_alpha
-                text(ax_genrz, kk, ct.genrz_est(ii) + sign(ct.genrz_est(ii)) * (1.96 * ct.genrz_se(ii) + 0.003), ...
-                     '*', 'HorizontalAlignment', 'center', 'FontSize', 20, 'FontWeight', 'bold');
-            end
-        end
-        set(ax_genrz, 'XTick', 1:nAreas, 'XTickLabel', area2test_name(sidx_genrz), 'FontSize', 14);
-        xtickangle(ax_genrz, 45);
-        ylabel(ax_genrz, 'CCGP - chance', 'FontSize', 16);
-        title(ax_genrz, ['CCGP - Generalization - ' fig_ttl], 'FontSize', 18, 'FontWeight', 'bold');
-        yline(ax_genrz, 0, 'k--', 'LineWidth', 1.2);
-        box(ax_genrz, 'off');
-        hold(ax_genrz, 'off');
-
-        drawnow;
-        if strcmp(param_name, 'chosenflavor')
-            fname_genrz = [report_dir 'Fig_S6b_generalization.png'];
-        elseif strcmp(param_name, 'chosenside')
-            fname_genrz = [report_dir 'Fig_S6c_generalization.png'];
-        else
-            fname_genrz = [report_dir 'Fig_genrz_summary_' param_name '.png'];
-        end
-        saveas(fig_genrz, fname_genrz);
-        fprintf('  Saved: %s\n', fname_genrz);
     end
+    set(ax_genrz, 'XTick', 1:nAreas, 'XTickLabel', area2test_name(sidx_genrz), 'FontSize', 14);
+    xtickangle(ax_genrz, 45);
+    ylabel(ax_genrz, 'CCGP - chance', 'FontSize', 16);
+    title(ax_genrz, ['CCGP - Generalization - ' fig_ttl], 'FontSize', 18, 'FontWeight', 'bold');
+    yline(ax_genrz, 0, 'k--', 'LineWidth', 1.2);
+    box(ax_genrz, 'off');
+    hold(ax_genrz, 'off');
+
+    drawnow;
+    if strcmp(param_name, 'chosenflavor')
+        fname_genrz = [report_dir 'Fig_S6b_generalization.png'];
+    elseif strcmp(param_name, 'chosenside')
+        fname_genrz = [report_dir 'Fig_S6c_generalization.png'];
+    else
+        fname_genrz = [report_dir 'Fig_genrz_summary_' param_name '.png'];
+    end
+    saveas(fig_genrz, fname_genrz);
+    fprintf('  Saved: %s\n', fname_genrz);
 
 end  % parameter loop
-
-%% **************** Figure S5-style: accuracy-vs-bias curves per area ***************************************************************
-%
-% One figure per parameter x monkey.
-% 3x3 grid of subplots (one per area), each showing 4 curves:
-%   CC (within chosen), UU (within unchosen), CU (cross from chosen), UC (cross from unchosen)
-% Vertical dashed line at delta = 0 = training threshold = CCGP.
-% Peak of CU and UC curves = shCCGP.
-% A displaced peak (from delta=0) indicates H2 (midpoint shift between states).
-% A flat curve near 0.5 indicates no generalisation (H3 or no signal).
-
-cell_names  = {'CC (within chosen)', 'CU (cross)', 'UC (cross)', 'UU (within unchosen)'};
-cell_colors = {[0.2 0.4 0.8], [0.9 0.4 0.1], [0.9 0.4 0.1], [0.2 0.4 0.8]};
-cell_styles = {'-', '-', '--', '--'};
-% trainState x testState index pairs: CC=1,1  CU=1,2  UC=2,1  UU=2,2
-cell_idx    = {[1 1], [1 2], [2 1], [2 2]};
-
-if plot_toggle_enabled(plot_shCCGP)
-    for p = 1 : length(param.param2decode)
-        param_name = strrep(param.param2decode{p}, '_2AFC', '');
-
-        for m = 1 : length(mks)
-
-        fig_s5 = figure('Name', ['Bias curves - ' param_name ' - Monkey ' mks{m}], ...
-                        'Position', [50 50 1400 1100], 'Color', 'w');
-        tl_s5  = tiledlayout(fig_s5, 3, 3, 'TileSpacing', 'compact', 'Padding', 'compact');
-        title(tl_s5, ['Accuracy vs. bias offset - ' param_name ', Monkey ' mks{m} ...
-                       ' (each area at its max valid N)'], ...
-              'FontSize', 18, 'FontWeight', 'bold');
-
-        hm_order = [1 2 3 9 8 4 7 6 5];   % same layout as heatmap figures
-        for hm_idx = 1 : nAreas
-            ar = hm_order(hm_idx);
-            ax = nexttile(hm_idx);
-            hold(ax, 'on');
-
-            bc = bias_curve{m}{ar, p};   % 2 x 2 x n_delta, or empty
-
-            % Get the N actually used for this area/monkey/param
-            if ~isempty(bias_curve_N_used) && ~isempty(bias_curve_N_used{m}{ar,p})
-                N_used_str = ['N=' num2str(bias_curve_N_used{m}{ar,p})];
-            else
-                N_used_str = '';
-            end
-
-            if isempty(bc) || all(isnan(bc(:)))
-                text(0.5, 0.5, 'no data', 'Units', 'normalized', ...
-                     'HorizontalAlignment', 'center', 'FontSize', 12, 'Color', [0.6 0.6 0.6]);
-            else
-                for ci = 1 : 4
-                    trnS = cell_idx{ci}(1);
-                    tstS = cell_idx{ci}(2);
-                    curve = squeeze(bc(trnS, tstS, :));
-                    if all(isnan(curve)), continue; end
-
-                    plot(ax, delta_grid, curve, cell_styles{ci}, ...
-                         'Color', cell_colors{ci}, 'LineWidth', 2.0, ...
-                         'DisplayName', cell_names{ci});
-
-                    % Mark peak of cross-state curves with 95% CI on peak location
-                    if trnS ~= tstS
-                        [pk_val, pk_idx] = max(curve);
-                        plot(ax, delta_grid(pk_idx), pk_val, 'o', ...
-                             'Color', cell_colors{ci}, 'MarkerFaceColor', cell_colors{ci}, ...
-                             'MarkerSize', 7, 'HandleVisibility', 'off');
-                        % Horizontal error bar showing 95% CI of peak location
-                        if ~isempty(pk_stat{m}{ar,p})
-                            pk_sem_v = pk_stat{m}{ar,p}.sem_pk(trnS, tstS);
-                            if ~isnan(pk_sem_v) && pk_sem_v > 0
-                                errorbar(ax, delta_grid(pk_idx), pk_val, ...
-                                         0, 0, 1.96*pk_sem_v, 1.96*pk_sem_v, ...
-                                         'Color', cell_colors{ci}, 'LineWidth', 1.5, ...
-                                         'CapSize', 5, 'HandleVisibility', 'off');
-                            end
-                            if ~isnan(pk_stat{m}{ar,p}.pval_pk(trnS, tstS)) && ...
-                               pk_stat{m}{ar,p}.pval_pk(trnS, tstS) < 0.05
-                                text(ax, delta_grid(pk_idx), pk_val + 0.03, '*', ...
-                                     'Color', cell_colors{ci}, 'FontSize', 12, ...
-                                     'HorizontalAlignment', 'center', ...
-                                     'HandleVisibility', 'off');
-                            end
-                        end
-                    end
-                end
-            end
-
-            xline(ax, 0, 'k--', 'LineWidth', 1.2, 'HandleVisibility', 'off');
-            yline(ax, 0.5, 'Color', [0.7 0.7 0.7], 'LineStyle', ':', ...
-                  'LineWidth', 1.0, 'HandleVisibility', 'off');
-            xlim(ax, [delta_grid(1) delta_grid(end)]);
-            ylim(ax, [0.4 1.02]);
-            xlabel(ax, 'Bias offset (\delta)', 'FontSize', 11);
-            ylabel(ax, 'Accuracy', 'FontSize', 11);
-            % Area name + N used in subtitle
-            title(ax, [area2test_name{ar} '  ' N_used_str], ...
-                  'Color', colorareas(ar,:)/255, 'FontWeight', 'bold', 'FontSize', 13);
-            set(ax, 'FontSize', 10); box(ax, 'off');
-
-            if hm_idx == 1
-                legend(ax, 'Location', 'southeast', 'FontSize', 9);
-            end
-
-            hold(ax, 'off');
-        end
-
-            drawnow;
-            fname = [report_dir 'Fig_bias_curves_' param_name '_Monkey' mks{m} '.png'];
-            saveas(fig_s5, fname);
-            fprintf('  Saved: %s\n', fname);
-
-        end  % monkey
-    end  % parameter
-end
-
-%% Figure: Peak displacement (delta* per area, cross-state conditions)
-%
-% For each parameter, one figure (3x3 areas) showing mean peak location delta*
-% for CU and UC conditions.  Circles = monkey M, squares = monkey X.
-% Error bars = 95% CI across repetitions.  * = FDR-corrected p<fdr_alpha vs delta*=0.
-% H2 predicts: delta*_CU and delta*_UC significant with opposite signs.
-% H3 predicts: delta*_CU ~= delta*_UC ~= 0.
-
-if plot_toggle_enabled(plot_shCCGP) && ~isempty(peak_loc_reps_final)
-    for p = 1 : length(param.param2decode)
-        param_name = strrep(param.param2decode{p}, '_2AFC', '');
-        fig_ttl    = strrep(param.param2decode{p}, '_', ' ');
-
-        fig_pk = figure('Name', ['Peak displacement \delta^* \u2014 ' param_name], ...
-                        'Position', [50 50 1400 1100], 'Color', 'w');
-        tl_pk  = tiledlayout(fig_pk, 3, 3, 'TileSpacing', 'compact', 'Padding', 'compact');
-        title(tl_pk, ['\delta^* of cross-state shCCGP peak - ' param_name ...
-                       '  (circles=M, inv.triangles=X;  mean \pm 95% CI;  *: FDR p<' num2str(fdr_alpha) ' vs \delta^*=0)'], ...
-              'FontSize', 17, 'FontWeight', 'bold');
-
-        hm_order   = [1 2 3 9 8 4 7 6 5];
-        mk_markers = {'o', 'v'};   % circle = M, inverted triangle = X
-        mk_xoff    = [-0.12, 0.12];
-
-        % Collect all cross-state p-values for FDR correction
-        p_cross_vec = [];
-        p_cross_idx = zeros(0, 3);   % rows: [m ar ci]
-        for m = 1 : length(mks)
-            for ar = 1 : nAreas
-                if isempty(pk_stat{m}{ar,p}), continue; end
-                for ci = 1 : 2   % 1=CU (trainC testU), 2=UC (trainU testC)
-                    if ci == 1
-                        trnS2 = 1; tstS2 = 2; x_pos = 1 + mk_xoff(m);
-                    else
-                        trnS2 = 2; tstS2 = 1; x_pos = 2 + mk_xoff(m);
-                    end
-                    pv = pk_stat{m}{ar,p}.pval_pk(trnS2, tstS2);
-                    p_cross_vec(end+1)   = pv;         %#ok<AGROW>
-                    p_cross_idx(end+1,:) = [m ar ci];  %#ok<AGROW>
-                end
-            end
-        end
-        sig_cross_fdr = false(size(p_cross_vec));
-        if ~isempty(p_cross_vec)
-            valid_p = ~isnan(p_cross_vec);
-            if any(valid_p)
-                [~, ~, pfdr] = utils_fdr_bh(p_cross_vec(valid_p));
-                sig_cross_fdr(valid_p) = pfdr < fdr_alpha;
-            end
-        end
-
-        for hm_idx = 1 : nAreas
-            ar = hm_order(hm_idx);
-            ax = nexttile(hm_idx);
-            hold(ax, 'on');
-            col = colorareas(ar, :) / 255;
-
-            for m = 1 : length(mks)
-                if isempty(pk_stat{m}{ar,p}), continue; end
-                st = pk_stat{m}{ar,p};
-
-                for ci = 1 : 2
-                    if ci == 1
-                        trnS2 = 1; tstS2 = 2; x_pos = 1 + mk_xoff(m);
-                    else
-                        trnS2 = 2; tstS2 = 1; x_pos = 2 + mk_xoff(m);
-                    end
-                    mn_v  = st.mean_pk(trnS2, tstS2);
-                    sem_v = st.sem_pk(trnS2, tstS2);
-                    if isnan(mn_v), continue; end
-
-                    % Extract individual rep peaks for later star placement, but don't plot them
-                    v_dots = [];
-                    pklr = peak_loc_reps_final{m}{ar, p};
-                    if ~isempty(pklr)
-                        v_dots = squeeze(pklr(trnS2, tstS2, :));
-                        v_dots = v_dots(~isnan(v_dots));
-                    end
-
-                    % Plot mean +/- 95% CI
-                    errorbar(ax, x_pos, mn_v, 1.96*sem_v, mk_markers{m}, ...
-                             'Color', col, 'LineWidth', 2, 'CapSize', 5, ...
-                             'MarkerSize', 8, 'MarkerFaceColor', col, ...
-                             'HandleVisibility', 'off');
-
-                    % FDR significance * (median delta* != 0)
-                    sig_mask = p_cross_idx(:,1)==m & p_cross_idx(:,2)==ar & p_cross_idx(:,3)==ci;
-                    if any(sig_cross_fdr(sig_mask))
-                        dir_v = sign(mn_v); if dir_v == 0, dir_v = 1; end
-                        % Place star above/below the error bar
-                        ystar = mn_v + dir_v * (1.96*sem_v + 0.30);
-                        ystar = max(-0.85, min(0.85, ystar));  % clamp inside ylim [-1,1] with room for star
-                        text(ax, x_pos, ystar, '*', ...
-                             'Color', 'k', 'FontSize', 20, 'FontWeight', 'bold', ...
-                             'HorizontalAlignment', 'center', 'HandleVisibility', 'off', ...
-                             'Clipping', 'off');
-                    end
-                end
-
-                % Connect CU-UC with a line to visualise symmetry
-                mn_cu = st.mean_pk(1, 2);
-                mn_uc = st.mean_pk(2, 1);
-                if ~isnan(mn_cu) && ~isnan(mn_uc)
-                    plot(ax, [1+mk_xoff(m) 2+mk_xoff(m)], [mn_cu mn_uc], '-', ...
-                         'Color', [col 0.5], 'LineWidth', 1.5, 'HandleVisibility', 'off');
-                    % NOTE: s* (symmetry test) removed - confounded by shared-pseudopop
-                    % correlation: CU and UC use the same neurons in each rep, so their
-                    % sum is non-zero by sampling noise, not genuine same-direction shift.
-                end
-            end
-
-            yline(ax, 0, 'k--', 'LineWidth', 1.2, 'HandleVisibility', 'off');
-            set(ax, 'XTick', [1 2], 'XTickLabel', {'CU', 'UC'}, 'FontSize', 11);
-            ylabel(ax, '\delta^* (norm. units)', 'FontSize', 11);
-            title(ax, area2test_name{ar}, 'Color', col, 'FontWeight', 'bold', 'FontSize', 13);
-            xlim(ax, [0.5 2.5]);
-            ylim(ax, [-1 1]);   % CI of mean is much tighter than raw spread
-            box(ax, 'off'); hold(ax, 'off');
-        end
-
-        drawnow;
-        fname = [report_dir 'Fig_peak_disp_' param_name '.png'];
-        saveas(fig_pk, fname);
-        fprintf('  Saved: %s\n', fname);
-    end  % parameter loop
-end  % ~isempty peak_loc_reps_final
 
 %% Within-state decoding curves per area (log2 N axis)
 %
@@ -1589,7 +895,7 @@ fprintf('  Saved: %s\n', fname_ws);
 % Re-evaluates the three LME contrasts at N = 50, 100, 200, 350, 500 to confirm
 % that reported results at N_eval_global = 200 are stable across pseudopop size.
 %
-% One 1x3-panel figure per (parameter x metric: CCGP / shCCGP / Improvement).
+% One 1x3-panel figure per parameter.
 %
 % Interpretation guide:
 %   Filled circles at a given N = that area's estimate is significant (|z| > 1.96).
@@ -1598,96 +904,93 @@ fprintf('  Saved: %s\n', fname_ws);
 %   set alpha_rob = 0.15 to visualise uncertainty bands.
 
 alpha_rob    = 1;    % SE shading opacity (1 = hidden for Corel/vector export)
-metric_names = {'CCGP', 'shCCGP', 'Improvement'};
-metric_idx_rob = 1:(1 + 2*double(plot_shCCGP));
+metric_names = {'CCGP'};
 
 for p = 1 : length(param.param2decode)
     param_name_rob = strrep(param.param2decode{p}, '_2AFC', '');
     fig_ttl_rob    = strrep(param.param2decode{p}, '_', ' ');
 
-    for metric = metric_idx_rob
-        ct_rob = all_contrasts{p, metric};
-        if ~isfield(ct_rob, 'N_evals_rob'), continue; end
+    ct_rob = all_contrasts{p, 1};
+    if ~isfield(ct_rob, 'N_evals_rob'), continue; end
 
-        N_evals_rob  = ct_rob.N_evals_rob;
-        LogN_rob_vec = log2(N_evals_rob);
+    N_evals_rob  = ct_rob.N_evals_rob;
+    LogN_rob_vec = log2(N_evals_rob);
 
-        rob_tick_N = [50 100 200 500];
-        rob_tick_N = rob_tick_N(rob_tick_N <= param.pseudopop(end));
+    rob_tick_N = [50 100 200 500];
+    rob_tick_N = rob_tick_N(rob_tick_N <= param.pseudopop(end));
 
-        fig_rob = figure('Name', ['Robustness - ' metric_names{metric} ' - ' param_name_rob], ...
-                         'Position', [100 100 1400 480], 'Color', 'w');
-        tl_rob  = tiledlayout(fig_rob, 1, 3, 'TileSpacing', 'compact', 'Padding', 'compact');
-        title(tl_rob, [metric_names{metric} ' - ' fig_ttl_rob ...
-                       '  |  Robustness: contrast vs log_{2}(N)'], ...
-              'FontSize', 18, 'FontWeight', 'bold');
+    fig_rob = figure('Name', ['Robustness - CCGP - ' param_name_rob], ...
+                     'Position', [100 100 1400 480], 'Color', 'w');
+    tl_rob  = tiledlayout(fig_rob, 1, 3, 'TileSpacing', 'compact', 'Padding', 'compact');
+    title(tl_rob, ['CCGP - ' fig_ttl_rob ...
+                   '  |  Robustness: contrast vs log_{2}(N)'], ...
+          'FontSize', 18, 'FontWeight', 'bold');
 
-        % Panel order: gain modulation, geometry specificity, generalization
-        cont_names      = {'Gain modulation',      'Geometry specificity', ...
-                           'Generalization'};
-        cont_est_fields = {'rob_gainmod_est', 'rob_geomspec_est', 'rob_genrz_est'};
-        cont_se_fields  = {'rob_gainmod_se',  'rob_geomspec_se',  'rob_genrz_se'};
+    % Panel order: gain modulation, geometry specificity, generalization
+    cont_names      = {'Gain modulation',      'Geometry specificity', ...
+                       'Generalization'};
+    cont_est_fields = {'rob_gainmod_est', 'rob_geomspec_est', 'rob_genrz_est'};
+    cont_se_fields  = {'rob_gainmod_se',  'rob_geomspec_se',  'rob_genrz_se'};
 
-        for ci = 1 : 3
-            ax_r = nexttile(ci);
-            hold(ax_r, 'on');
+    for ci = 1 : 3
+        ax_r = nexttile(ci);
+        hold(ax_r, 'on');
 
-            vals_mat = ct_rob.(cont_est_fields{ci});   % [nAreas x n_N_rob]
-            se_mat   = ct_rob.(cont_se_fields{ci});
+        vals_mat = ct_rob.(cont_est_fields{ci});   % [nAreas x n_N_rob]
+        se_mat   = ct_rob.(cont_se_fields{ci});
 
-            for ar = 1 : nAreas
-                col = colorareas(ar,:) / 255;
-                v   = vals_mat(ar,:);
-                s   = se_mat(ar,:);
+        for ar = 1 : nAreas
+            col = colorareas(ar,:) / 255;
+            v   = vals_mat(ar,:);
+            s   = se_mat(ar,:);
 
-                % 95% CI shading (opaque by default - set alpha_rob < 1 to show)
-                x_fill = [LogN_rob_vec, fliplr(LogN_rob_vec)];
-                y_fill = [v + 1.96*s,   fliplr(v - 1.96*s)];
-                fill(ax_r, x_fill, y_fill, col, 'FaceAlpha', alpha_rob, ...
-                     'EdgeColor', 'none', 'HandleVisibility', 'off');
+            % 95% CI shading (opaque by default - set alpha_rob < 1 to show)
+            x_fill = [LogN_rob_vec, fliplr(LogN_rob_vec)];
+            y_fill = [v + 1.96*s,   fliplr(v - 1.96*s)];
+            fill(ax_r, x_fill, y_fill, col, 'FaceAlpha', alpha_rob, ...
+                 'EdgeColor', 'none', 'HandleVisibility', 'off');
 
-                plot(ax_r, LogN_rob_vec, v, 'Color', col, 'LineWidth', 2, ...
-                     'Marker', 'none', 'DisplayName', area2test_name{ar});
+            plot(ax_r, LogN_rob_vec, v, 'Color', col, 'LineWidth', 2, ...
+                 'Marker', 'none', 'DisplayName', area2test_name{ar});
 
-                % Filled dot at N values where estimate is significant (|z| > 1.96)
-                sig_mask = abs(v ./ max(s, 1e-12)) > 1.96;
-                if any(sig_mask)
-                    plot(ax_r, LogN_rob_vec(sig_mask), v(sig_mask), 'o', ...
-                         'Color', col, 'MarkerSize', 10, 'MarkerFaceColor', col, ...
-                         'MarkerEdgeColor', 'none', 'HandleVisibility', 'off');
-                end
-            end
-
-            yline(ax_r, 0, 'k--', 'LineWidth', 1);
-            xline(ax_r, log2(N_eval_global), 'Color', [0.4 0.4 0.4], ...
-                  'LineStyle', ':', 'LineWidth', 2, 'HandleVisibility', 'off');
-            set(ax_r, 'XTick', log2(rob_tick_N), ...
-                      'XTickLabel', arrayfun(@num2str, rob_tick_N, 'UniformOutput', false), ...
-                      'FontSize', 20);
-            xlim(ax_r, [log2(40), log2(param.pseudopop(end) + 100)]);
-            xlabel(ax_r, 'Pseudopop size N  (log_{2} scale)', 'FontSize', 12);
-            ylabel(ax_r, ['Contrast ' cont_names{ci}(1) ' estimate'], 'FontSize', 12);
-            title(ax_r, cont_names{ci}, 'FontSize', 14, 'FontWeight', 'bold');
-            if ci == 1
-                legend(ax_r, 'Location', 'best', 'FontSize', 8);
+            % Filled dot at N values where estimate is significant (|z| > 1.96)
+            sig_mask = abs(v ./ max(s, 1e-12)) > 1.96;
+            if any(sig_mask)
+                plot(ax_r, LogN_rob_vec(sig_mask), v(sig_mask), 'o', ...
+                     'Color', col, 'MarkerSize', 10, 'MarkerFaceColor', col, ...
+                     'MarkerEdgeColor', 'none', 'HandleVisibility', 'off');
             end
         end
 
-        drawnow;
-        if metric == 1 && strcmp(param_name_rob, 'chosenflavor')
-            fname_rob_png = [report_dir 'Fig_S7a_robustness_flavor.png'];
-            fname_rob_pdf = [report_dir 'Fig_S7a_robustness_flavor'];
-        elseif metric == 1 && strcmp(param_name_rob, 'chosenside')
-            fname_rob_png = [report_dir 'Fig_S7b_robustness_side.png'];
-            fname_rob_pdf = [report_dir 'Fig_S7b_robustness_side'];
-        else
-            fname_rob_png = [report_dir 'Fig_robustness_' metric_names{metric} '_' param_name_rob '.png'];
-            fname_rob_pdf = [report_dir 'Fig_robustness_' metric_names{metric} '_' param_name_rob];
+        yline(ax_r, 0, 'k--', 'LineWidth', 1);
+        xline(ax_r, log2(N_eval_global), 'Color', [0.4 0.4 0.4], ...
+              'LineStyle', ':', 'LineWidth', 2, 'HandleVisibility', 'off');
+        set(ax_r, 'XTick', log2(rob_tick_N), ...
+                  'XTickLabel', arrayfun(@num2str, rob_tick_N, 'UniformOutput', false), ...
+                  'FontSize', 20);
+        xlim(ax_r, [log2(40), log2(param.pseudopop(end) + 100)]);
+        xlabel(ax_r, 'Pseudopop size N  (log_{2} scale)', 'FontSize', 12);
+        ylabel(ax_r, ['Contrast ' cont_names{ci}(1) ' estimate'], 'FontSize', 12);
+        title(ax_r, cont_names{ci}, 'FontSize', 14, 'FontWeight', 'bold');
+        if ci == 1
+            legend(ax_r, 'Location', 'best', 'FontSize', 8);
         end
-        saveas(fig_rob, fname_rob_png);
-        % print(fig_rob, fname_rob_pdf, '-dpdf', '-vector');
-        fprintf('  Saved: %s + .pdf\n', fname_rob_png);
     end
+
+    drawnow;
+    if strcmp(param_name_rob, 'chosenflavor')
+        fname_rob_png = [report_dir 'Fig_S7a_robustness_flavor.png'];
+        fname_rob_pdf = [report_dir 'Fig_S7a_robustness_flavor'];
+    elseif strcmp(param_name_rob, 'chosenside')
+        fname_rob_png = [report_dir 'Fig_S7b_robustness_side.png'];
+        fname_rob_pdf = [report_dir 'Fig_S7b_robustness_side'];
+    else
+        fname_rob_png = [report_dir 'Fig_robustness_CCGP_' param_name_rob '.png'];
+        fname_rob_pdf = [report_dir 'Fig_robustness_CCGP_' param_name_rob];
+    end
+    saveas(fig_rob, fname_rob_png);
+    % print(fig_rob, fname_rob_pdf, '-dpdf', '-vector');
+    fprintf('  Saved: %s + .pdf\n', fname_rob_png);
 end
 
 %% Posthoc: pairwise CCGP contrast comparisons between areas
@@ -1915,10 +1218,6 @@ function x = build_x(coef_names, trnS_lbl, tstS_lbl, ar_lbl, Ns, ref_train, ref_
     end
 end
 
-function tf = plot_toggle_enabled(plot_shCCGP)
-    tf = logical(plot_shCCGP);
-end
-
 function idx = find_coef_exact(coef_names, required_parts)
     n_req = length(required_parts);
     idx   = 0;
@@ -1931,4 +1230,3 @@ function idx = find_coef_exact(coef_names, required_parts)
         end
     end
 end
-
