@@ -4,26 +4,10 @@
 %
 % Pseudopopulations have zero noise correlations by construction, so the
 % true Sw is diagonal.  The correct decoder is diagonal LDA in the full
-% N-dimensional space:
-%   w_i = (mu1_i - mu2_i) / (pv_i + alpha*mean(pv))
-% where alpha=0.01 provides L2 regularization against near-silent neurons.
+% N-dimensional space: w_i = (mu1_i - mu2_i) / (pv_i + alpha*mean(pv))
+% wiht alpha=0.01 provides L2 regularization against quiet neurons
 %
 % Full 2x2 cross-decoding producing CCGP for all four cells (CC, CU, UC, UU).
-%
-% Key design choices
-%
-%   CCGP  = accuracy with training-calibrated threshold
-%
-%   Computed by pooling CV-fold scores within each (trainState, testState)
-%   direction, then:
-%     CCGP  = accuracy at threshold delta = 0   (training midpoint mapped to 0)
-%
-%   Pooling is valid because each trial appears in exactly one test fold
-%   (no train/test overlap).  Scores from different folds are normalised by
-%   the within-fold training class-separation before pooling so that the
-%   training threshold is always at 0 in normalised units.  With minTr = 20
-%   this yields 20 test observations per class per direction (pooled over
-%   10 folds x 2 trials).
 %
 % Outputs:
 %   processed/states_2afc_ccgp*.mat        acc_overall
@@ -49,7 +33,7 @@ end
 addpath(genpath([currentPath '\scripts\'])); % add scripts folder to path
 
 param.path2go        = [currentPath '\processed\'];
-param.pseudopop      = round(logspace(log10(25), log10(500), 25));   % 30 log-spaced sizes
+param.pseudopop      = round(logspace(log10(25), log10(500), 25));   % 25 log-spaced sizes
 param.param2decode   = {'chosenflavor_2AFC' 'chosenside_2AFC'};
 param.minTr          = [20 20];
 param.Repetition     = 100;

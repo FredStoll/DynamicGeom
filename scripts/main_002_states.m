@@ -1,11 +1,11 @@
-﻿%% ============================================================
-% main_002_states.m
+%% main_002_states.m
+%
 % ============================================================
 % State decoding analysis for 2AFC sessions.
-% - Builds states_2afc_<suffix>.mat in processed.
-% - Produces report_002 figures and statistics.
-% - Uses held-out area decoding outputs to summarize state counts,
-%   timing, and behavior-linked effects.
+% - Builds states_2afc_final.mat in processed, used by all later scripts
+% - make report_002 figures and statistics:
+%   Fig 2B-F, 2H and Fig S5A-D (plus response-to-reviewer Figs R5-R6).
+%
 % Dependencies: utils_decoding_crosstask_rmvarea, utils_createpseudopop,
 %               utils_fitDecod, utils_designvec_ab, utils_areaposthoc,
 %               utils_groupvector, utils_fdr_bh
@@ -92,7 +92,6 @@ if overwrite || ~exist([param.path2proc 'states_2afc_' endname '.mat'], 'file')
 else
     disp('Loading existing data...')
     load([param.path2proc 'states_2afc_' endname '.mat'])
-    % KEEP_ME_states_2afc_final.mat
 end
 
 %% some initial param for posthoc
@@ -110,10 +109,148 @@ mk_col = [51 128 230; 140 89 38]/255; % Monkey colors
 % keep only the sessions without dropping any area
 out = out_all(cellfun(@isempty, {out_all(:).area4unit_removed}));
 
-%% Plot example trials decoding performance for 3 sessions
+%% count number of areas and neurons per session (response to reviewers R2.2 / R3.m1)
+out_rmv = out_all(~cellfun(@isempty, {out_all(:).area4unit_removed}));
+% from out_rmv, get session and length of 1st dim in fr_heldout into a table
+tbl = table();
+for i = 1:length(out_rmv)
+    tbl.session{i} = out_rmv(i).session;
+    tbl.n_units(i) = size(out_rmv(i).fr_heldout, 1);
+end
+% for each unique session, count how many time it's name is in the table
+unique_sessions = unique(tbl.session);
+% keep the first letter of unique_sessions to get the monkey name
+for i = 1:length(unique_sessions)
+    monkey{i} = unique_sessions{i}(1);
+end
+for i = 1:length(unique_sessions)
+    n_duplicates(i) = sum(strcmp(tbl.session, unique_sessions{i}));
+end
+tbl2 = table(unique_sessions, monkey', n_duplicates', 'VariableNames', {'session', 'monkey', 'n_duplicates'});
+
+% per monkey get median/min/max of the number of areas per session
+median_areas = NaN(length(unique(tbl2.monkey)),3);
+for i = 1:length(unique(tbl2.monkey))
+    monkey_name = unique(tbl2.monkey);
+    monkey_name = monkey_name{i};
+    idx = strcmp(tbl2.monkey, monkey_name);
+    median_areas(i,:) = [median(tbl2.n_duplicates(idx)) min(tbl2.n_duplicates(idx)) max(tbl2.n_duplicates(idx))];
+end
+
+clear monkey
+for i = 1:height(tbl)
+    monkey(i) = tbl.session{i}(1);
+end
+tbl.monkey = monkey';
+
+median_units = NaN(length(unique(tbl.monkey)),3);
+for i = 1:length(unique(tbl.monkey))
+    monkey_name = unique(tbl.monkey);
+    monkey_name = monkey_name(i);
+    idx = ismember(tbl.monkey, monkey_name);
+    median_units(i,:) = [median(tbl.n_units(idx)) min(tbl.n_units(idx)) max(tbl.n_units(idx))];
+end
+
+% from out (full population), get session and length of 1st dim in fr_heldout into a table
+tbl3 = table();
+for i = 1:length(out)
+    tbl3.session{i} = out(i).session;
+    tbl3.n_units(i) = size(out(i).fr_heldout, 1);
+end
+% keep the first letter of each session to get the monkey name
+tbl3.monkey = cellfun(@(s) s(1), tbl3.session, 'UniformOutput', false);
+
+% per monkey get median/min/max of the number of neurons per session
+median_units_sess = NaN(length(unique(tbl3.monkey)),3);
+for i = 1:length(unique(tbl3.monkey))
+    monkey_name = unique(tbl3.monkey);
+    monkey_name = monkey_name{i};
+    idx = strcmp(tbl3.monkey, monkey_name);
+    median_units_sess(i,:) = [median(tbl3.n_units(idx)) min(tbl3.n_units(idx)) max(tbl3.n_units(idx))];
+end
+
+mk_list = unique(tbl3.monkey);
+for i = 1:length(mk_list)
+    utils_diary(fid_log, 'Monkey %s - areas/session: median %g [%g-%g] | neurons/area: median %g [%g-%g] | neurons/session: median %g [%g-%g]\n', ...
+        mk_list{i}, median_areas(i,:), median_units(i,:), median_units_sess(i,:));
+end
+
+%% REVISION - topology of probability centroids 
+
+num_sessions = length(out);
+true_prob_dists = out(1,1).topology.true_prob_dists; % Constant across sessions
+num_pairs = length(true_prob_dists);
+
+% Preallocate arrays to gather data across all 360 sessions
+all_rhos = NaN(num_sessions, 1);
+all_pvals = NaN(num_sessions, 1);
+all_pc1_explained = NaN(num_sessions, 1);
+all_neural_dists = NaN(num_sessions, num_pairs);
+
+for u = 1:num_sessions
+    if isfield(out(1,u), 'topology') && ~isempty(out(1,u).topology)
+        all_rhos(u) = out(1,u).topology.rho;
+        all_pvals(u) = out(1,u).topology.pval;
+        all_neural_dists(u, :) = out(1,u).topology.neural_dists;
+        
+        % Guard against sessions where PCA couldn't calculate variance
+        if ~isempty(out(1,u).topology.pca_explained)
+            all_pc1_explained(u) = out(1,u).topology.pca_explained(1);
+        end
+    end
+end
+
+%- Distance Correlation (Parametric Scaling)
+figure('Position', [100, 100, 900, 400]);
+
+subplot(1,2,1);
+histogram(all_rhos, 20, 'FaceColor', [0.2 0.6 0.8], 'EdgeColor', 'w');
+hold on;
+xline(nanmean(all_rhos), 'r-', 'LineWidth', 2);
+xline(0, 'k--', 'LineWidth', 1.5);
+title('Distribution of Distance Correlations (\rho)');
+xlabel('Spearman \rho (Neural vs. True Distance)');
+ylabel('Number of Sessions');
+legend('Session \rho', sprintf('Mean \\rho = %.2f', nanmean(all_rhos)), 'Location', 'NorthWest');
+grid on;
+
+subplot(1,2,2);
+% Calculate mean and Standard Error of the Mean (SEM) across sessions
+mean_neural_dists = nanmean(all_neural_dists, 1);
+sem_neural_dists = nanstd(all_neural_dists, 0, 1) ./ sqrt(sum(~isnan(all_neural_dists(:,1))));
+errorbar(true_prob_dists, mean_neural_dists, sem_neural_dists, 'o', ...
+    'MarkerFaceColor', [0.2 0.6 0.8], 'MarkerEdgeColor', 'w', ...
+    'LineWidth', 1.5, 'CapSize', 0, 'MarkerSize', 8);
+hold on;
+
+p_fit = polyfit(true_prob_dists, mean_neural_dists, 1);
+x_fit = linspace(min(true_prob_dists), max(true_prob_dists), 100);
+y_fit = polyval(p_fit, x_fit);
+plot(x_fit, y_fit, 'r-', 'LineWidth', 1.5);
+
+title('Average Population Scaling');
+xlabel('\Delta Probability (Mathematical Difference)');
+ylabel('Average Neural Distance');
+legend('Population Mean \pm SEM', 'Linear Fit', 'Location', 'NorthWest');
+grid on;
+saveas(gcf, [report_dir 'Fig_R5ab_topology_distances.png']);
+
+%- Linearity + PCA Check
+figure('Position', [150, 150, 450, 400]);
+histogram(all_pc1_explained, 20, 'FaceColor', [0.8 0.4 0.2], 'EdgeColor', 'w');
+hold on;
+xline(nanmean(all_pc1_explained), 'r-', 'LineWidth', 2);
+title('Linearity of Probability Topology');
+xlabel('Variance Explained by PC1 (%)');
+ylabel('Number of Sessions');
+legend('Sessions', sprintf('Mean PC1 Variance = %.1f%%', nanmean(all_pc1_explained)), 'Location', 'NorthWest');
+grid on;
+saveas(gcf, [report_dir 'Fig_R5c_topology_pc1.png']);
+
+%% FIG 2B - Plot example trials decoding performance for some sessions
 
 fig(1);
-example_sess = randperm(length(list),12);
+example_sess = randperm(length(list),24);
 
 x = 0;
 for i = example_sess
@@ -123,7 +260,7 @@ for i = example_sess
         pred_norm = out(i).adjusted_prediction_scores_rand; %./ repmat(sum(adjusted_prediction_scores_rand,3),1,1,3);
         for tr = example_trials
             x = x + 1;
-            subplot(4,3,x)
+            subplot(6,4,x)
 
             for c = 1 : 3
                 plot(out(i).time(time_sub),squeeze(pred_norm(tr,time_sub,c)),"Color",col(c,:));hold on
@@ -136,13 +273,14 @@ for i = example_sess
             end
             chosen_pb = out(i).cond.chosenproba_2AFC(tr);
             unchosen_pb = out(i).cond.unchosenproba_2AFC(tr);
-            title([list(i).name(1:7) ' - Ch= ' num2str(chosen_pb) ' - Unch= ' num2str(unchosen_pb)])        
+            title([list(i).name(1:7) ' - Ch= ' num2str(chosen_pb) ' - Unch= ' num2str(unchosen_pb)])
         end
         xlim([-500 1000])
     end
 end
+saveas(gcf, [report_dir 'Fig_2b_example_trials.png']);
 
-%% FIG 2C-D - extract number of states and duration + PLOT/STATISTICS
+%% FIG 2C-D and S5A - extract number, duration and start time of states + PLOT/STATISTICS
 
 monks = cellfun(@(x) x(1), {list.name}, 'UniformOutput', false)';
 mk_names = {'M','X'};
@@ -166,77 +304,25 @@ for i = 1 : length(list)
     end
 end
 
-saveas(gcf, [report_dir 'Fig_2ab_example.png']); 
-
-x=0;
-figure("Position",[ 853         108        1016        1204]);
-for m = 1 : length(unique(monks))
-    nb_states_mk = nb_states(ismember(monks, mk_names{m}),:);
-    dur_states_mk = dur_states(ismember(monks, mk_names{m}),:);
-    t_states_mk = t_states(ismember(monks, mk_names{m}),:);
-
-    x = x + 1;
-    % Number of states/trial
-    subplot(2,3,x)
-    hold on
-    % Jitter slightly less than boxplot width (boxplot width=0.5, so use 0.22)
-    jitter = 0.35;
-    rng(1); % for reproducibility of jitter
-    dot_jitter = (rand(size(nb_states_mk,1),3)-0.5)*jitter;
-    for i = 1:size(nb_states_mk,1)
-        xvals = (1:3) + dot_jitter(i,:);
-        plot(xvals, nb_states_mk(i,:), '-', 'Color', [0.7 0.7 0.7], 'LineWidth', 1);
+st_data = {nb_states, dur_states, t_states};
+st_ylab = {'Number of states/trial', 'Duration of states (s)', 'State latencies (s)'};
+st_ylim = {[0 2.05], [0.15 0.55], [0 0.4]};
+[fg, cm] = fig_cm(22, 6.6);
+for k = 1 : 3
+    for m = 1 : length(mk_names)
+        X   = st_data{k}(ismember(monks, mk_names{m}), :);
+        rng(1); % for reproducibility of jitter
+        jit = (rand(size(X,1),3)-0.5)*0.35;
+        ax  = axes(fg, 'Position', cm(1.6 + ((k-1)*2 + m - 1)*3.6, 0.7, 2.1, 5.2));
+        box_dots(ax, X, 1:3, col, col_light, {[1 2 3]}, jit);
+        style_box_axes(ax, true, st_ylab{k}, st_ylim{k}, [0.4 3.6]);
+        set(ax, 'XTick', []);
+        text(ax, 2, st_ylim{k}(2), ['mk ' mk_names{m}], 'FontSize', 11, 'FontAngle', 'italic', ...
+            'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom');
     end
-    for c = 1:3
-        scatter(c + dot_jitter(:,c), nb_states_mk(:,c), 15, col_light(c,:),'filled', 'MarkerEdgeColor', 'None', 'LineWidth', 1);
-    end
-    boxplot(nb_states_mk, 'Colors', col, 'Symbol', '', 'Widths', 0.5, 'Positions', 1:3, 'Labels', {'Chosen','Unchosen','Other'});
-    ylabel('Number of states/trial');
-    xlabel('State');
-    title('Number of states/trial');
-    set(gca,'XTick',1:3,'XTickLabel',{'Chosen','Unchosen','Other'});
-    ylim([0 2.05])
-
-    x = x + 1;
-    subplot(2,3,x)
-    % Duration of states (nb bins/trial)
-    hold on
-    rng(1); % for reproducibility of jitter
-    dot_jitter2 = (rand(size(dur_states_mk,1),3)-0.5)*jitter;
-    for i = 1:size(dur_states_mk,1)
-        xvals = (1:3) + dot_jitter2(i,:);
-        plot(xvals, dur_states_mk(i,:), '-', 'Color', [0.7 0.7 0.7], 'LineWidth', 1);
-    end
-    for c = 1:3
-        scatter(c + dot_jitter2(:,c), dur_states_mk(:,c), 15, col_light(c,:),'filled', 'MarkerEdgeColor', 'None', 'LineWidth', 1);
-    end
-    boxplot(dur_states_mk, 'Colors', col, 'Symbol', '', 'Widths', 0.5, 'Positions', 1:3, 'Labels', {'Chosen','Unchosen','Other'});
-    ylabel('Duration of states (s)');
-    xlabel('State');
-    title('Duration of states');
-    set(gca,'XTick',1:3,'XTickLabel',{'Chosen','Unchosen','Other'});
-    ylim([0.15 0.55])
-
-    x = x + 1;
-    subplot(2,3,x)
-    % start time of states 
-    hold on
-    rng(1); % for reproducibility of jitter
-    dot_jitter2 = (rand(size(t_states_mk,1),3)-0.5)*jitter;
-    for i = 1:size(t_states_mk,1)
-        xvals = (1:3) + dot_jitter2(i,:);
-        plot(xvals, t_states_mk(i,:), '-', 'Color', [0.7 0.7 0.7], 'LineWidth', 1);
-    end
-    for c = 1:3
-        scatter(c + dot_jitter2(:,c), t_states_mk(:,c), 15, col_light(c,:),'filled', 'MarkerEdgeColor', 'None', 'LineWidth', 1);
-    end
-    boxplot(t_states_mk, 'Colors', col, 'Symbol', '', 'Widths', 0.5, 'Positions', 1:3, 'Labels', {'Chosen','Unchosen','Other'});
-    ylabel('Start time of states (s)');
-    xlabel('State');
-    title('Start time of states');
-    set(gca,'XTick',1:3,'XTickLabel',{'Chosen','Unchosen','Other'});
-    ylim([0 0.4])
 end
+state_legend(fg, cm(1.6 + 4*3.6 + 0.15, 0.8, 1.8, 1.3), {'Chosen', 'Unchosen', 'Other'}, col);
+save_fig(fg, [report_dir 'Fig_2cd_S5a_states']);
 
 % stat on nb_states with states as predictors (chosen, unchosen, other) across sessions and monkey as random effect (fitglme)
 data_table = table();
@@ -256,17 +342,10 @@ utils_diary(fid_log, 'LME results for number of states:\n');
 utils_diary(fid_log, '%s', evalc('disp(mdl.Coefficients)'));
 utils_diary(fid_log, '%s', evalc('anova(mdl)'));
 
-
-% data_table(ismember(data_table.monkey,'X'),:)=[];
-% mdl = fitlme(data_table, 'nb_states ~ 1 + state ')
-% disp('LME results for number of states:');
-% disp(mdl.Coefficients);
-
 mdl2 = fitlme(data_table, 'dur_states ~ 1 + state + (1|monkey) + (1|monkey:session)');
 utils_diary(fid_log, 'LME results for duration of states:\n');
 utils_diary(fid_log, '%s', evalc('disp(mdl2.Coefficients)'));
 utils_diary(fid_log, '%s', evalc('anova(mdl2)'));
-
 
 mdl3 = fitlme(data_table, 't_states ~ 1 + state + (1|monkey) + (1|monkey:session)');
 utils_diary(fid_log, 'LME results for start time of states:\n');
@@ -314,7 +393,7 @@ utils_diary(fid_log, 'LME results: dur_states real vs shuffle (label permutation
 utils_diary(fid_log, '%s', evalc('disp(mdl_shuf_dur.Coefficients)'));
 utils_diary(fid_log, '%s', evalc('anova(mdl_shuf_dur)'));
 
-%% ratio of chosen/unchosen against proba difference
+%% FIG 2E and S5B - ratio of chosen/unchosen against proba difference
 
 diff_cd = [20 40 60];
 nb_states_ch_unch = NaN(length(list),3);
@@ -350,96 +429,37 @@ for i = 1 : length(list)
     end
 end
 
-saveas(gcf, [report_dir 'Fig_2cd_states.png']);
-
-% improved plot per monkey (box + jittered lines like earlier style) including t_states
-figure("Position",[ 853         108        1016        1204]);
+rt_data = {nb_states_ch_unch, dur_states_ch_unch, t_states_ch_unch};
+rt_ylab = {{'Ratio of Chosen/Unchosen', 'state number'}, {'Ratio of Chosen/Unchosen', 'state duration'}, ...
+           {'Ratio of Chosen/Unchosen', 'state latency'}};
 jitter = 0.35;
 rng(1); % reproducible jitter
-
+rt_X = cell(3, length(mk_names));  rt_jit = rt_X;
 for m = 1:length(mk_names)
-    mk_idx = strcmp(monks, mk_names{m});
-    nb_m = nb_states_ch_unch(mk_idx,:);
-    dur_m = dur_states_ch_unch(mk_idx,:);
-    t_m = t_states_ch_unch(mk_idx,:);
-    nSess = sum(mk_idx);
-
-    if nSess == 0
-        continue
+    for k = 1:3
+        X = rt_data{k}(strcmp(monks, mk_names{m}), :);
+        X = X(~all(isnan(X), 2), :);
+        rt_X{k,m}   = X;
+        rt_jit{k,m} = (rand(size(X,1),3)-0.5)*jitter;
     end
-
-    % subplot base index for this monkey
-    baseIdx = (m-1)*3;
-
-    % Number-of-states ratio plot
-    subplot(2,3,baseIdx + 1)
-    hold on
-    valid_rows = ~all(isnan(nb_m),2);
-    nb_m = nb_m(valid_rows,:);
-    nR = size(nb_m,1);
-    if nR>0
-        dot_jitter = (rand(nR,3)-0.5)*jitter;
-        for i = 1:nR
-            xvals = (1:3) + dot_jitter(i,:);
-            plot(xvals, nb_m(i,:), '-', 'Color', [0.7 0.7 0.7], 'LineWidth', 0.8);
-        end
-        for c = 1:3
-            scatter(c + dot_jitter(:,c), nb_m(:,c), 18, repmat(mk_col(m,:)*0.4 + 0.6, nR,1), 'filled', 'MarkerEdgeColor','none');
-        end
-    end
-    boxplot(nb_m, 'Colors', mk_col(m,:), 'Symbol', '', 'Widths', 0.5, 'Labels', arrayfun(@num2str,diff_cd,'UniformOutput',false));
-    xlabel('Chosen - Unchosen proba difference (%)');
-    ylabel('Ratio of Ch/Unch states');
-    title([mk_names{m} ': Ratio Ch/Unch states vs Proba diff']);
-    xlim([0.5 3.5]);
-    hold off
-
-    % Duration-ratio plot
-    subplot(2,3,baseIdx + 2)
-    hold on
-    valid_rows = ~all(isnan(dur_m),2);
-    dur_m = dur_m(valid_rows,:);
-    nR = size(dur_m,1);
-    if nR>0
-        dot_jitter = (rand(nR,3)-0.5)*jitter;
-        for i = 1:nR
-            xvals = (1:3) + dot_jitter(i,:);
-            plot(xvals, dur_m(i,:), '-', 'Color', [0.7 0.7 0.7], 'LineWidth', 0.8);
-        end
-        for c = 1:3
-            scatter(c + dot_jitter(:,c), dur_m(:,c), 18, repmat(mk_col(m,:)*0.4 + 0.6, nR,1), 'filled', 'MarkerEdgeColor','none');
-        end
-    end
-    boxplot(dur_m, 'Colors', mk_col(m,:), 'Symbol', '', 'Widths', 0.5, 'Labels', arrayfun(@num2str,diff_cd,'UniformOutput',false));
-    xlabel('Chosen - Unchosen proba difference (%)');
-    ylabel('Ratio of Ch/Unch state duration');
-    title([mk_names{m} ': Ratio Ch/Unch dur vs Proba diff']);
-    xlim([0.5 3.5]);
-    hold off
-
-    % Start-time-ratio plot
-    subplot(2,3,baseIdx + 3)
-    hold on
-    valid_rows = ~all(isnan(t_m),2);
-    t_m = t_m(valid_rows,:);
-    nR = size(t_m,1);
-    if nR>0
-        dot_jitter = (rand(nR,3)-0.5)*jitter;
-        for i = 1:nR
-            xvals = (1:3) + dot_jitter(i,:);
-            plot(xvals, t_m(i,:), '-', 'Color', [0.7 0.7 0.7], 'LineWidth', 0.8);
-        end
-        for c = 1:3
-            scatter(c + dot_jitter(:,c), t_m(:,c), 18, repmat(mk_col(m,:)*0.4 + 0.6, nR,1), 'filled', 'MarkerEdgeColor','none');
-        end
-    end
-    boxplot(t_m, 'Colors', mk_col(m,:), 'Symbol', '', 'Widths', 0.5, 'Labels', arrayfun(@num2str,diff_cd,'UniformOutput',false));
-    xlabel('Chosen - Unchosen proba difference (%)');
-    ylabel('Ratio of Ch/Unch start time');
-    title([mk_names{m} ': Ratio Ch/Unch start time vs Proba diff']);
-    xlim([0.5 3.5]);
-    hold off
 end
+
+[fg, cm] = fig_cm(22.4, 6.8);
+for k = 1:3
+    yl = [0, max(cellfun(@(X) max([X(:); 0]), rt_X(k,:))) * 1.03];
+    x0 = 1.9 + (k-1)*2*3.6;
+    for m = 1:length(mk_names)
+        ax = axes(fg, 'Position', cm(x0 + (m-1)*3.6, 1.5, 2.1, 4.6));
+        box_dots(ax, rt_X{k,m}, 1:3, repmat(mk_col(m,:), 3, 1), repmat(mk_col(m,:)*0.4 + 0.6, 3, 1), ...
+            {[1 2 3]}, rt_jit{k,m});
+        style_box_axes(ax, true, rt_ylab{k}, yl, [0.4 3.6]);
+        set(ax, 'XTick', 1:3, 'XTickLabel', arrayfun(@num2str, diff_cd, 'UniformOutput', false));
+        text(ax, 2, yl(2), ['mk ' mk_names{m}], 'Color', mk_col(m,:), 'FontSize', 11, 'FontAngle', 'italic', ...
+            'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom');
+    end
+    fig_text(fg, cm(x0, 0.1, 3.6 + 2.1, 0.5), 'Proba difference (%)', 11);
+end
+save_fig(fg, [report_dir 'Fig_2e_S5b_ratio_vs_probadiff']);
 
 %- Stat on ratios with diff (proba difference) as predictor using mixed effects (like before)
 % Build table with stacked data (rows = sessions x diff levels)
@@ -454,7 +474,7 @@ data_table_ratio.diff = categorical(temp(:));
 temp = repmat(sess_num, 1, length(diff_cd));
 data_table_ratio.session = categorical(temp(:));
 
-% Fit LME for nb_ratio
+% LME for nb_ratio
 tbl_nb = data_table_ratio(~isnan(data_table_ratio.nb_ratio), :);
 if ~isempty(tbl_nb)
     mdl_nb = fitlme(tbl_nb, 'nb_ratio ~ 1 + diff + (1|monkey) + (1|monkey:session)');
@@ -463,7 +483,7 @@ if ~isempty(tbl_nb)
     utils_diary(fid_log, '%s', evalc('anova(mdl_nb)'));
 end
 
-% Fit LME for dur_ratio
+% LME for dur_ratio
 tbl_dur = data_table_ratio(~isnan(data_table_ratio.dur_ratio), :);
 if ~isempty(tbl_dur)
     mdl_dur = fitlme(tbl_dur, 'dur_ratio ~ 1 + diff + (1|monkey) + (1|monkey:session)');
@@ -472,7 +492,7 @@ if ~isempty(tbl_dur)
     utils_diary(fid_log, '%s', evalc('anova(mdl_dur)'));
 end
 
-% Fit LME for t_ratio
+% LME for t_ratio
 tbl_t = data_table_ratio(~isnan(data_table_ratio.t_ratio), :);
 if ~isempty(tbl_t)
     mdl_t = fitlme(tbl_t, 't_ratio ~ 1 + diff + (1|monkey) + (1|monkey:session)');
@@ -519,10 +539,7 @@ x = 0;
 for sess = 1 : length(out)
     if ~isempty(out(sess).adjusted_prediction_scores_rand)
         x=x+1;
-        pred_norm = out(sess).adjusted_prediction_scores_rand; %./ repmat(sum(adjusted_prediction_scores_rand,3),1,1,3);
-        % for c = 1 : 3
-        %     pred_norm(:,:,c) = pred_norm(:,:,c) - mean(pred_norm(:,time_bl,c),2);
-        % end
+        pred_norm = out(sess).adjusted_prediction_scores_rand; 
         pred_all(x,:,:) = squeeze(mean(pred_norm(:,time_sub,:),1));
     end
 end
@@ -554,7 +571,7 @@ for sess = 1 : length(out)
     % if ~isempty(out(sess).saccades) & strcmp(list(sess).name(1),'M')
     if ~isempty(out(sess).saccades) 
         x=x+1;
-        pred_norm = out(sess).adjusted_prediction_scores_rand; %./ repmat(sum(adjusted_prediction_scores_rand,3),1,1,3);
+        pred_norm = out(sess).adjusted_prediction_scores_rand; 
         for c = 1 : 3
             pred_norm(:,:,c) = pred_norm(:,:,c) - mean(pred_norm(:,time_bl,c),2);
         end
@@ -761,82 +778,9 @@ end
 sig_pval_int = false(size(adj_pval_int));
 sig_pval_int(idxs) = true;
 
-% plot that
-
 newtime = out(sess).time(time_sub);
 
-% fig(1); 
-% % Quick deliberation
-% subplot(6,2,[1 3])
-% for c = 1 : 3
-%     m = mean(squeeze(pred_quick(:,:,c)),'omitnan');
-%     s = std(squeeze(pred_quick(:,:,c)),'omitnan') / sqrt(size(pred_quick,1));
-%     plot(newtime, m, 'Color', col(c,:)); hold on;
-%     fill([newtime fliplr(newtime)], [m-s fliplr(m+s)], col(c,:), ...
-%         'FaceAlpha',0.2, 'EdgeColor','none');
-% end
-% sig_idx = find(sig_pval_int);
-% scatter(newtime(sig_idx), repmat(.095, size(sig_idx)), 10, 'k', 'filled');
-% ylim([-0.05 .1]);
-% title('Quick deliberation');
-
-% % Hesitation
-% subplot(6,2,[2 4])
-% for c = 1 : 3
-%     m = mean(squeeze(pred_hesit(:,:,c)),'omitnan');
-%     s = std(squeeze(pred_hesit(:,:,c)),'omitnan') / sqrt(size(pred_hesit,1));
-%     plot(newtime, m, 'Color', col(c,:)); hold on;
-%     fill([newtime fliplr(newtime)], [m-s fliplr(m+s)], col(c,:), ...
-%         'FaceAlpha',0.2, 'EdgeColor','none');
-% end
-% sig_idx = find(sig_pval_int);
-% scatter(newtime(sig_idx), repmat(.095, size(sig_idx)), 10, 'k', 'filled');
-% ylim([-0.05 .1]);
-% title('Hesitation');
-
-% % only show sig_fdr when sig interaction!
-% %signif_fdr(~sig_pval_int, :) = false;
-
-% for i = 1:3
-%     % Quick comparisons
-%     subplot(6,2,4+(2*i-1))
-%     plot(newtime, estimates(:,i), 'k'); hold on;
-%     scatter(newtime(signif_fdr(:,i)), estimates(signif_fdr(:,i),i), 20, 'r', 'filled');
-%     yline(0, 'k--');
-%     xlabel('Time (ms)'); ylabel('t-statistic');
-%     ylim([-15 15]);
-%     title(sprintf('%s vs %s', groups{comparisons(i,1)}, groups{comparisons(i,2)}));
-
-%     % Hesit comparisons
-%     subplot(6,2,4+(2*i))
-%     plot(newtime, estimates(:,i+3), 'k'); hold on;
-%     scatter(newtime(signif_fdr(:,i+3)), estimates(signif_fdr(:,i+3),i+3), 20, 'r', 'filled');
-%     yline(0, 'k--');
-%     xlabel('Time (ms)'); ylabel('t-statistic');
-%     ylim([-15 15]);
-%     title(sprintf('%s vs %s', groups{comparisons(i+3,1)}, groups{comparisons(i+3,2)}));
-% end
-
-% % Posthoc: Quick-chosen vs Hesit-chosen
-% subplot(6,2,11)
-% plot(newtime, estimates(:,7), 'k'); hold on;
-% scatter(newtime(signif_fdr(:,7)), estimates(signif_fdr(:,7),7), 20, 'r', 'filled');
-% yline(0, 'k--');
-% xlabel('Time (ms)'); ylabel('t-statistic');
-% ylim([-15 15]);
-% title('Quick-Chosen vs Hesit-Chosen');
-
-% % Posthoc: Quick-unchosen vs Hesit-unchosen
-% subplot(6,2,12)
-% plot(newtime, estimates(:,8), 'k'); hold on;
-% scatter(newtime(signif_fdr(:,8)), estimates(signif_fdr(:,8),8), 20, 'r', 'filled');
-% yline(0, 'k--');
-% xlabel('Time (ms)'); ylabel('t-statistic');
-% ylim([-15 15]);
-% title('Quick-Unchosen vs Hesit-Unchosen');
-
-
-%% -- State count & duration: Quick vs Hesit (probability-matched trials) --
+%% FIG 2F and S5D -- State count & duration: Quick vs Hesit (probability-matched trials) --
 % Compares nb of states and duration of states between quick and hesit trials,
 % using the same probability-matched trial pairs as the posterior analysis above.
 % Mirrors the across-all-trials analysis (line ~199) but here quick vs hesit.
@@ -870,7 +814,7 @@ utils_diary(fid_log, '%s', evalc('anova(lme_dur_sq)'));
 
 % === Posthoc pairwise contrasts from the full model (same approach as posterior analysis) ===
 % Build contrast vectors C = mu1 - mu2, then t = C*beta / sqrt(C*covB*C')
-% Reference coding (MATLAB alphabetical): Type ref='hesit', StateType ref='Chosen'
+% Reference coding (alphabetical): Type ref='hesit', StateType ref='Chosen'
 
 cnames_nb  = lme_nb_sq.CoefficientNames;
 beta_nb    = fixedEffects(lme_nb_sq);
@@ -915,12 +859,8 @@ end
 [~, ~, ph_adj_dur] = utils_fdr_bh(ph_pval_dur);
 
 % Format p-value labels for brackets (raw p-values, no FDR)
-ph_plabel_nb  = cell(nPH, 1);
-ph_plabel_dur = cell(nPH, 1);
-for ph = 1:nPH
-    ph_plabel_nb{ph}  = sprintf('p=%.3f', ph_pval_nb(ph));
-    ph_plabel_dur{ph} = sprintf('p=%.3f', ph_pval_dur(ph));
-end
+ph_plabel_nb  = arrayfun(@fmt_p, ph_pval_nb,  'UniformOutput', false);
+ph_plabel_dur = arrayfun(@fmt_p, ph_pval_dur, 'UniformOutput', false);
 
 utils_diary(fid_log, '=== Posthoc: Number of states (uncorrected) ===\n');
 for ph = 1:nPH
@@ -934,11 +874,8 @@ for ph = 1:nPH
 end
 
 % === Plot with significance brackets ===
-figure("Position",[741   555   846   720]); set(gcf, 'Renderer', 'painters');  % vector-safe for CorelDraw/EMF export
 col_type_sq = [0.2 0.5 0.8; 0.8 0.3 0.3]; % blue=quick, red=hesit
 xlabels_sq = {'Ch-Quick','Ch-Hesit','Unch-Quick','Unch-Hesit','Other-Quick','Other-Hesit'};
-positions_q_sq = [1 3 5];
-positions_h_sq = [2 4 6];
 jitter_sq = 0.45;
 
 % Assemble data matrix [nS x 6]: columns = Ch-Q, Ch-H, Unch-Q, Unch-H, Other-Q, Other-H
@@ -947,74 +884,30 @@ data_nb_sq  = [nb_states_quick(:,1)  nb_states_hesit(:,1)  nb_states_quick(:,2) 
 data_dur_sq = [dur_states_quick(:,1) dur_states_hesit(:,1) dur_states_quick(:,2) ...
                dur_states_hesit(:,2) dur_states_quick(:,3) dur_states_hesit(:,3)];
 
-% Area colors: Ch=col(1), Unch=col(2), Other=col(3) - same for Quick and Hesit
-scatter_cols_sq = [col(1,:); col(1,:); col(2,:); col(2,:); col(3,:); col(3,:)];
-scatter_cols_sq_light = [col_light(1,:); col_light(1,:); col_light(2,:); col_light(2,:); col_light(3,:); col_light(3,:)];
+% State colors: Ch=col(1), Unch=col(2), Other=col(3) - same for Quick and Hesit
+scatter_cols_sq       = col([1 1 2 2 3 3], :);
+scatter_cols_sq_light = col_light([1 1 2 2 3 3], :);
 
 valid_rows_nb  = ~any(isnan(data_nb_sq),  2);
 valid_rows_dur = ~any(isnan(data_dur_sq), 2);
-
-% --- Subplot 1: Number of states ---
-subplot(1,2,1,'Position',[0.07 0.18 0.40 0.72]); hold on;
-dot_jit_sq = (rand(nS_sq, 6)-0.5)*jitter_sq;
-for i = 1:nS_sq
-    if ~valid_rows_nb(i), continue; end
-    for c = 1:3
-        plot([positions_q_sq(c)+dot_jit_sq(i,2*c-1), positions_h_sq(c)+dot_jit_sq(i,2*c)], ...
-             [data_nb_sq(i,2*c-1), data_nb_sq(i,2*c)], '-', 'Color', [0.75 0.75 0.75]);
-    end
-end
-for g = 1:6
-    scatter(g + dot_jit_sq(valid_rows_nb,g), data_nb_sq(valid_rows_nb,g), 20, scatter_cols_sq_light(g,:), ...
-        'filled','MarkerEdgeColor','none');
-end
-hbp_nb = boxplot(data_nb_sq(valid_rows_nb,:), 'Colors', scatter_cols_sq, 'Symbol','','Widths',0.65,'Positions',1:6,'Labels',xlabels_sq);
-set(hbp_nb, 'LineWidth', 2);
-xlabel('Group','FontSize',16); ylabel('Number of states/trial','FontSize',16);
-title('Number of states','FontSize',16);
-set(gca,'XTick',1:6,'XTickLabel',xlabels_sq,'FontSize',16);
-% Significance brackets (all 3 comparisons, showing p-value)
-yl_nb = ylim;
-bk_step_nb = (yl_nb(2)-yl_nb(1)) * 0.14;
-for k = 1:nPH
-    bky = yl_nb(2) + k * bk_step_nb;
-    bx1 = ph_comps{k,6};  bx2 = ph_comps{k,7};
-    plot([bx1 bx1 bx2 bx2], [bky-bk_step_nb*0.25 bky bky bky-bk_step_nb*0.25], 'k-', 'LineWidth', 0.8);
-    text(mean([bx1 bx2]), bky+bk_step_nb*0.05, ph_plabel_nb{k}, ...
-        'HorizontalAlignment','center','FontSize',16);
-end
-ylim([yl_nb(1), yl_nb(2) + (nPH+1)*bk_step_nb]);
-
-% --- Subplot 2: Duration of states ---
-subplot(1,2,2,'Position',[0.55 0.18 0.40 0.72]); hold on;
+dot_jit_sq  = (rand(nS_sq, 6)-0.5)*jitter_sq;
 dot_jit_sq2 = (rand(nS_sq, 6)-0.5)*jitter_sq;
-for i = 1:nS_sq
-    if ~valid_rows_dur(i), continue; end
-    for c = 1:3
-        plot([positions_q_sq(c)+dot_jit_sq2(i,2*c-1), positions_h_sq(c)+dot_jit_sq2(i,2*c)], ...
-             [data_dur_sq(i,2*c-1), data_dur_sq(i,2*c)], '-', 'Color', [0.75 0.75 0.75]);
-    end
+
+sq_data  = {data_nb_sq, data_dur_sq};
+sq_valid = {valid_rows_nb, valid_rows_dur};
+sq_jit   = {dot_jit_sq, dot_jit_sq2};
+sq_ylab  = {'Average number of states', 'Average state duration (s)'};
+sq_plab  = {ph_plabel_nb, ph_plabel_dur};
+[fg, cm] = fig_cm(12.1, 8.6);
+for k = 1:2
+    v  = sq_valid{k};
+    ax = axes(fg, 'Position', cm(1.8 + (k-1)*6.0, 2.4, 4.0, 5.9));
+    box_dots(ax, sq_data{k}(v,:), 1:6, scatter_cols_sq, scatter_cols_sq_light, {[1 2], [3 4], [5 6]}, sq_jit{k}(v,:));
+    style_box_axes(ax, true, sq_ylab{k}, [], [0.4 6.6]);
+    set(ax, 'XTick', 1:6, 'XTickLabel', xlabels_sq, 'XTickLabelRotation', 45);
+    add_brackets(ax, cell2mat(ph_comps(:, 6:7)), sq_plab{k}, sq_data{k}(v,:), 1:6);
 end
-for g = 1:6
-    scatter(g + dot_jit_sq2(valid_rows_dur,g), data_dur_sq(valid_rows_dur,g), 20, scatter_cols_sq_light(g,:), ...
-        'filled','MarkerEdgeColor','none');
-end
-hbp_dur = boxplot(data_dur_sq(valid_rows_dur,:), 'Colors', scatter_cols_sq, 'Symbol','','Widths',0.65,'Positions',1:6,'Labels',xlabels_sq);
-set(hbp_dur, 'LineWidth', 2);
-xlabel('Group','FontSize',16); ylabel('Duration of states (s)','FontSize',16);
-title('Duration of states','FontSize',16);
-set(gca,'XTick',1:6,'XTickLabel',xlabels_sq,'FontSize',16);
-% Significance brackets (all 3 comparisons, showing p-value)
-yl_dur = ylim;
-bk_step_dur = (yl_dur(2)-yl_dur(1)) * 0.14;
-for k = 1:nPH
-    bky = yl_dur(2) + k * bk_step_dur;
-    bx1 = ph_comps{k,6};  bx2 = ph_comps{k,7};
-    plot([bx1 bx1 bx2 bx2], [bky-bk_step_dur*0.25 bky bky bky-bk_step_dur*0.25], 'k-', 'LineWidth', 0.8);
-    text(mean([bx1 bx2]), bky+bk_step_dur*0.05, ph_plabel_dur{k}, ...
-        'HorizontalAlignment','center','FontSize',16);
-end
-ylim([yl_dur(1), yl_dur(2) + (nPH+1)*bk_step_dur]);
+save_fig(fg, [report_dir 'Fig_2f_S5d_hesit_states']);
 
 
 %% -- Chosen/Unchosen ratio: Quick vs Hesit --
@@ -1030,61 +923,30 @@ dur_ratio_hesit_qh = dur_states_hesit(:,1) ./ dur_states_hesit(:,2);
 
 nS_qh = length(nb_ratio_quick_qh);
 
-saveas(gcf, [report_dir 'Fig_2f_hesit_states.png']); 
-
 % Plot: simple Quick vs Hesit boxplot (same style as earlier)
-fig(1);
-jitter_qh = 0.25;
 rng(1);
 data_nb_qh  = [nb_ratio_quick_qh  nb_ratio_hesit_qh];
 data_dur_qh = [dur_ratio_quick_qh dur_ratio_hesit_qh];
 valid_nb_qh  = ~any(isnan(data_nb_qh),  2);
 valid_dur_qh = ~any(isnan(data_dur_qh), 2);
 col_qh = [col_type_sq(1,:); col_type_sq(2,:)];
+dot_jit_qh  = (rand(nS_qh, 2)-0.5)*0.25;
+dot_jit_qh2 = (rand(nS_qh, 2)-0.5)*0.25;
 
-subplot(1,2,1); hold on;
-dot_jit_qh = (rand(nS_qh, 2)-0.5)*jitter_qh;
-for i = 1:nS_qh
-    if valid_nb_qh(i)
-        plot([1+dot_jit_qh(i,1), 2+dot_jit_qh(i,2)], [data_nb_qh(i,1), data_nb_qh(i,2)], ...
-            '-', 'Color', [0.7 0.7 0.7 0.5]);
-    end
+qh_data  = {data_nb_qh, data_dur_qh};
+qh_valid = {valid_nb_qh, valid_dur_qh};
+qh_jit   = {dot_jit_qh, dot_jit_qh2};
+qh_ylab  = {{'Ratio of Chosen/Unchosen', 'state number'}, {'Ratio of Chosen/Unchosen', 'state duration'}};
+[fg, cm] = fig_cm(9, 6.4);
+for k = 1:2
+    v  = qh_valid{k};
+    ax = axes(fg, 'Position', cm(1.8 + (k-1)*4.3, 1.2, 2.6, 4.8));
+    plot(ax, [0.5 2.5], [1 1], 'k--', 'LineWidth', 0.5);
+    box_dots(ax, qh_data{k}(v,:), [1 2], col_qh, col_qh*0.4 + 0.6, {[1 2]}, qh_jit{k}(v,:));
+    style_box_axes(ax, true, qh_ylab{k}, [], [0.5 2.5]);
+    set(ax, 'XTick', [1 2], 'XTickLabel', {'Quick', 'Hesit'});
 end
-for g = 1:2
-    vld = valid_nb_qh;
-    scatter(g + dot_jit_qh(vld,g), data_nb_qh(vld,g), 20, col_qh(g,:), ...
-        'filled','MarkerEdgeColor','none','MarkerFaceAlpha',0.5);
-end
-hbp_nb_qh = boxplot(data_nb_qh(valid_nb_qh,:), 'Colors', col_qh, ...
-    'Symbol','','Widths',0.4,'Positions',[1 2],'Labels',{'Quick','Hesit'});
-set(hbp_nb_qh, 'LineWidth', 2);
-yline(1, 'k--');
-ylabel('Ratio Ch/Unch nb states','FontSize',16);
-title('Ch/Unch nb states ratio: Quick vs Hesit','FontSize',16);
-set(gca,'XTick',[1 2],'XTickLabel',{'Quick','Hesit'},'FontSize',16);
-xlim([0.5 2.5]); hold off;
-
-subplot(1,2,2); hold on;
-dot_jit_qh2 = (rand(nS_qh, 2)-0.5)*jitter_qh;
-for i = 1:nS_qh
-    if valid_dur_qh(i)
-        plot([1+dot_jit_qh2(i,1), 2+dot_jit_qh2(i,2)], [data_dur_qh(i,1), data_dur_qh(i,2)], ...
-            '-', 'Color', [0.7 0.7 0.7 0.5]);
-    end
-end
-for g = 1:2
-    vld = valid_dur_qh;
-    scatter(g + dot_jit_qh2(vld,g), data_dur_qh(vld,g), 20, col_qh(g,:), ...
-        'filled','MarkerEdgeColor','none','MarkerFaceAlpha',0.5);
-end
-hbp_dur_qh = boxplot(data_dur_qh(valid_dur_qh,:), 'Colors', col_qh, ...
-    'Symbol','','Widths',0.4,'Positions',[1 2],'Labels',{'Quick','Hesit'});
-set(hbp_dur_qh, 'LineWidth', 2);
-yline(1, 'k--');
-ylabel('Ratio Ch/Unch duration','FontSize',16);
-title('Ch/Unch duration ratio: Quick vs Hesit','FontSize',16);
-set(gca,'XTick',[1 2],'XTickLabel',{'Quick','Hesit'},'FontSize',16);
-xlim([0.5 2.5]); hold off;
+save_fig(fg, [report_dir 'Fig_extra_hesit_ratio']);
 
 % --- LME: ratio ~ type + (1|monkey) + (1|monkey:session) ---
 nb_ratio_all_qh  = [nb_ratio_quick_qh;  nb_ratio_hesit_qh];
@@ -1112,10 +974,256 @@ if ~isempty(tbl_dur_qh)
     utils_diary(fid_log, '%s', evalc('anova(mdl_dur_qh)'));
 end
 
-saveas(gcf, [report_dir 'Fig_extra_hesit_ratio.png']); 
+%% FIG S5C - Fixation-linked posteriors: look-chosen vs look-unchosen
+% (the dwell-time sweep at the end is response to reviewers Fig R6)
+
+dwell_times = 100:50:500;  % dwell times to sweep (ms)
+match_look  = true;       % probability-match look-chosen vs look-unchosen trials (like quick/hesit)
+
+load([param.path2proc 'saccadeCounts_all.mat']); % table with saccade counts per trial
+
+for sess = 1 : length(out)
+    if ~isempty(out(sess).adjusted_prediction_scores_rand)
+        out(sess).saccades_all = saccadeTimes(ismember(string(saccadeTimes.SessionID), string(list(sess).name(1:7))) & ismember(saccadeTimes.Trial,out(sess).keepTr),:);
+    end
+end
+
+% Monkey and session index (constant across all dwell times)
+monks_lk    = cellfun(@(x) x(1), {out(:).session}, 'UniformOutput', false)';
+mk_u_lk     = unique(monks_lk);
+sess_num_lk = zeros(length(out), 1);
+mk_cnt_lk   = zeros(length(mk_u_lk), 1);
+for i = 1:length(out)
+    m_idx = strcmp(mk_u_lk, monks_lk{i});
+    mk_cnt_lk(m_idx) = mk_cnt_lk(m_idx) + 1;
+    sess_num_lk(i)   = mk_cnt_lk(m_idx);
+end
+
+nDW = length(dwell_times);
+ph_tstat_dwell = NaN(nDW, 3);
+ph_pval_dwell  = NaN(nDW, 3);
+
+for dw_idx = 1:nDW
+    disp(['=== Fixation-linked posteriors: dwell time = ' num2str(dwell_times(dw_idx)) ' ms ===']);
+    dwell_ms = dwell_times(dw_idx);
+
+    post_look_ch   = NaN(length(out), 3);
+    post_look_unch = NaN(length(out), 3);
+
+    for sess = 1:length(out)
+        if isempty(out(sess).adjusted_prediction_scores_rand) || isempty(out(sess).saccades_all)
+            continue;
+        end
+        sacc_tbl = out(sess).saccades_all;
+        pred_raw = out(sess).adjusted_prediction_scores_rand;
+        t        = out(sess).time;
+
+        bl_mask = t >= -500 & t <= 0;
+        pred_bl = pred_raw;
+        for c = 1:3
+            pred_bl(:,:,c) = pred_bl(:,:,c) - mean(pred_bl(:, bl_mask, c), 2);
+        end
+
+        nTr_s        = height(sacc_tbl);
+        tr_post_ch   = NaN(nTr_s, 3);
+        tr_post_unch = NaN(nTr_s, 3);
+        tr_idx_map   = NaN(nTr_s, 1);
+
+        for r = 1:nTr_s
+            tr_num = sacc_tbl.Trial(r);
+            tr_idx = find(out(sess).keepTr == tr_num, 1);
+            if isempty(tr_idx), continue; end
+            tr_idx_map(r) = tr_idx;
+
+            cs = out(sess).cond.chosenside_2AFC(tr_idx);
+            if cs == 1, ch_dir = "R"; else, ch_dir = "L"; end
+            if ch_dir == "R", unch_dir = "L"; else, unch_dir = "R"; end
+
+            et = sacc_tbl.EnterTimes_rel{r};
+            ed = sacc_tbl.EnterDir{r};
+            if isempty(et) || isempty(ed), continue; end
+
+            ch_wins = []; unch_wins = [];
+            for e = 1:numel(et)
+                if isnan(et(e)), continue; end
+                win_mask = t >= et(e) & t < et(e) + dwell_ms;
+                if ~any(win_mask), continue; end
+                post_win = squeeze(mean(pred_bl(tr_idx, win_mask, :), 2))';
+
+                if ed(e) == ch_dir
+                    ch_wins = [ch_wins; post_win];
+                elseif ed(e) == unch_dir
+                    unch_wins = [unch_wins; post_win];
+                end
+            end
+
+            if ~isempty(ch_wins),   tr_post_ch(r,:)   = mean(ch_wins,   1, 'omitnan'); end
+            if ~isempty(unch_wins), tr_post_unch(r,:) = mean(unch_wins, 1, 'omitnan'); end
+        end
+
+        ch_valid   = find(~any(isnan(tr_post_ch),   2) & ~isnan(tr_idx_map));
+        unch_valid = find(~any(isnan(tr_post_unch), 2) & ~isnan(tr_idx_map));
+        nb2take_lk = min(length(ch_valid), length(unch_valid));
+
+        if nb2take_lk > 0
+            if match_look
+                ch_pb   = [out(sess).cond.chosenproba_2AFC(tr_idx_map(ch_valid))   out(sess).cond.unchosenproba_2AFC(tr_idx_map(ch_valid))];
+                unch_pb = [out(sess).cond.chosenproba_2AFC(tr_idx_map(unch_valid)) out(sess).cond.unchosenproba_2AFC(tr_idx_map(unch_valid))];
+
+                used_ch = false(length(ch_valid), 1);
+                sel_ch  = NaN(nb2take_lk, 1);
+                for h = 1:nb2take_lk
+                    dists = sqrt(sum((ch_pb - unch_pb(h,:)).^2, 2));
+                    dists(used_ch) = Inf;
+                    min_dist    = min(dists);
+                    min_idx_all = find(abs(dists - min_dist) < 1e-10);
+                    [~, ci]     = min(abs(ch_valid(min_idx_all) - unch_valid(h)));
+                    pick        = min_idx_all(ci);
+                    sel_ch(h)   = ch_valid(pick);
+                    used_ch(pick) = true;
+                end
+                sel_unch = unch_valid(1:nb2take_lk);
+            else
+                sel_ch   = ch_valid(randperm(length(ch_valid),   nb2take_lk));
+                sel_unch = unch_valid(randperm(length(unch_valid), nb2take_lk));
+            end
+
+            post_look_ch(sess,:)   = mean(tr_post_ch(sel_ch,   :), 1, 'omitnan');
+            post_look_unch(sess,:) = mean(tr_post_unch(sel_unch, :), 1, 'omitnan');
+        end
+    end
+
+    % LME: Posterior ~ LookType * StateType + (1|Monkey) + (1|Monkey:Session)
+    nS_lk     = length(out);
+    post_vec  = [post_look_ch(:,1);   post_look_ch(:,2);   post_look_ch(:,3); ...
+                 post_look_unch(:,1); post_look_unch(:,2); post_look_unch(:,3)];
+    look_vec  = [repmat({'chosen'},  3*nS_lk, 1); repmat({'unchosen'}, 3*nS_lk, 1)];
+    state_vec = [repmat({'Chosen'},  nS_lk, 1); repmat({'Unchosen'}, nS_lk, 1); repmat({'Other'}, nS_lk, 1); ...
+                 repmat({'Chosen'},  nS_lk, 1); repmat({'Unchosen'}, nS_lk, 1); repmat({'Other'}, nS_lk, 1)];
+    monk_vec  = repmat(monks_lk, 6, 1);
+    sess_vec  = categorical(repmat(sess_num_lk, 6, 1));
+
+    tbl_lk = table(post_vec, look_vec, state_vec, monk_vec, sess_vec, ...
+        'VariableNames', {'Posterior','LookType','StateType','Monkey','Session'});
+    tbl_lk = tbl_lk(~isnan(tbl_lk.Posterior), :);
+
+    lme_lk = fitlme(tbl_lk, 'Posterior ~ LookType * StateType + (1|Monkey) + (1|Monkey:Session)');
+
+    % Posthoc: contrast look-chosen vs look-unchosen for each state type
+    % MATLAB ref coding: LookType ref='chosen' (c<u), StateType ref='Chosen' (C<O<U)
+    cnames_lk = lme_lk.CoefficientNames;
+    beta_lk   = fixedEffects(lme_lk);
+    covB_lk   = lme_lk.CoefficientCovariance;
+    dof_lk    = lme_lk.DFE;
+
+    I_lk  = strcmp(cnames_lk, '(Intercept)');
+    Lu    = ~cellfun(@isempty, regexp(cnames_lk, '^LookType_unchosen$'));
+    SO    = ~cellfun(@isempty, regexp(cnames_lk, '^StateType_Other$'));
+    SU    = ~cellfun(@isempty, regexp(cnames_lk, '^StateType_Unchosen$'));
+    LuSO  = ~cellfun(@isempty, regexp(cnames_lk, 'LookType_unchosen:StateType_Other|StateType_Other:LookType_unchosen'));
+    LuSU  = ~cellfun(@isempty, regexp(cnames_lk, 'LookType_unchosen:StateType_Unchosen|StateType_Unchosen:LookType_unchosen'));
+
+    mu_ch_Ch     = double(I_lk);
+    mu_ch_Unch   = double(I_lk | SU);
+    mu_ch_Oth    = double(I_lk | SO);
+    mu_unch_Ch   = double(I_lk | Lu);
+    mu_unch_Unch = double(I_lk | Lu | SU | LuSU);
+    mu_unch_Oth  = double(I_lk | Lu | SO | LuSO);
+
+    ph_comps_lk = {
+        mu_ch_Ch   - mu_unch_Ch,   'Ch post: look-Ch vs look-Unch',    1, 2;
+        mu_ch_Unch - mu_unch_Unch, 'Unch post: look-Ch vs look-Unch',  3, 4;
+        mu_ch_Oth  - mu_unch_Oth,  'Other post: look-Ch vs look-Unch', 5, 6;
+    };
+    nPH_lk = size(ph_comps_lk, 1);
+
+    ph_tstat_lk = NaN(nPH_lk, 1);
+    ph_pval_lk  = NaN(nPH_lk, 1);
+    for ph = 1:nPH_lk
+        C = ph_comps_lk{ph,1};
+        est = C * beta_lk;
+        se  = sqrt(C * covB_lk * C');
+        ph_tstat_lk(ph) = est / se;
+        ph_pval_lk(ph)  = 2 * (1 - tcdf(abs(ph_tstat_lk(ph)), dof_lk));
+    end
+    [~, ~, ph_adj_lk] = utils_fdr_bh(ph_pval_lk);
+    ph_plabel_lk = arrayfun(@fmt_p, ph_pval_lk, 'UniformOutput', false);
+
+    ph_tstat_dwell(dw_idx, :) = ph_tstat_lk';
+    ph_pval_dwell(dw_idx,  :) = ph_pval_lk';
+
+    if dwell_ms == 250
+        utils_diary(fid_log, '=== LME: Fixation-gated posteriors ~ LookType * StateType (dwell=%d ms) ===\n', dwell_ms);
+        utils_diary(fid_log, '%s', evalc('disp(lme_lk.Coefficients)'));
+        utils_diary(fid_log, '%s', evalc('anova(lme_lk)'));
+        utils_diary(fid_log, '=== Posthoc: Fixation-gated posteriors (uncorrected, dwell=%d ms) ===\n', dwell_ms);
+        for ph = 1:nPH_lk
+            utils_diary(fid_log, '  %-42s t=%6.2f  p=%.4f  (adj=%.4f)\n', ...
+                ph_comps_lk{ph,2}, ph_tstat_lk(ph), ph_pval_lk(ph), ph_adj_lk(ph));
+        end
+
+        % Main 6-group boxplot
+        data_lk = [post_look_ch(:,1)  post_look_unch(:,1) ...
+                   post_look_ch(:,2)  post_look_unch(:,2) ...
+                   post_look_ch(:,3)  post_look_unch(:,3)];
+        xlabels_lk      = {'Ch-FixCh','Ch-FixUnch','Unch-FixCh','Unch-FixUnch','Other-FixCh','Other-FixUnch'};
+        sc_col_lk       = [col(1,:); col(1,:); col(2,:); col(2,:); col(3,:); col(3,:)];
+        sc_col_lk_light = [col_light(1,:); col_light(1,:); col_light(2,:); col_light(2,:); col_light(3,:); col_light(3,:)];
+        valid_lk        = ~any(isnan(data_lk), 2);
+
+        rng(1);
+        dot_jit_lk = (rand(nS_lk, 6)-0.5)*0.45;
+        [fg, cm] = fig_cm(6.2, 8.6);
+        ax = axes(fg, 'Position', cm(1.8, 2.4, 4.0, 5.9));
+        plot(ax, [0.4 6.6], [0 0], 'k--', 'LineWidth', 0.5);
+        box_dots(ax, data_lk(valid_lk,:), 1:6, sc_col_lk, sc_col_lk_light, {[1 2], [3 4], [5 6]}, ...
+            dot_jit_lk(valid_lk,:));
+        style_box_axes(ax, true, 'Normalized posterior probability', [], [0.4 6.6]);
+        set(ax, 'XTick', 1:6, 'XTickLabel', xlabels_lk, 'XTickLabelRotation', 45);
+        add_brackets(ax, cell2mat(ph_comps_lk(:, 3:4)), ph_plabel_lk, data_lk(valid_lk,:), 1:6);
+        save_fig(fg, [report_dir 'Fig_S5c_fixation_posteriors']);
+    end
+
+end  % end dwell loop
+
+% FDR-correct per contrast across dwell times
+ph_adj_dwell = NaN(nDW, 3);
+for c = 1:3
+    [~, ~, ph_adj_dwell(:,c)] = utils_fdr_bh(ph_pval_dwell(:,c));
+end
+
+contrast_labels_dw = {'Ch post: look-Ch vs look-Unch', 'Unch post: look-Ch vs look-Unch', 'Other post: look-Ch vs look-Unch'};
+utils_diary(fid_log, '=== Dwell-time sweep: t-stats and FDR-adjusted p-values ===\n');
+for c = 1:3
+    utils_diary(fid_log, '  Contrast: %s\n', contrast_labels_dw{c});
+    for dw = 1:nDW
+        utils_diary(fid_log, '    dwell=%3d ms  t=%6.2f  p=%.4f  (adj=%.4f)\n', ...
+            dwell_times(dw), ph_tstat_dwell(dw,c), ph_pval_dwell(dw,c), ph_adj_dwell(dw,c));
+    end
+end
+
+% Figure: t-stat vs dwell time, 3 lines (one per posthoc contrast)
+contrast_labels_dw_short = {'Ch posterior','Unch posterior','Other posterior'};
+figure("Position",[200 200 700 450]); set(gcf,'Renderer','painters'); hold on;
+for c = 1:3
+    plot(dwell_times, ph_tstat_dwell(:,c), '-o', 'Color', col(c,:), ...
+        'LineWidth', 1.5, 'MarkerFaceColor', col(c,:), 'MarkerSize', 6);
+    sig_dw = ph_adj_dwell(:,c) < 0.05;
+    if any(sig_dw)
+        scatter(dwell_times(sig_dw), ph_tstat_dwell(sig_dw,c), 60, col(c,:), ...
+            'filled', 'MarkerEdgeColor', 'k', 'LineWidth', 1);
+    end
+end
+yline(0,'k--','LineWidth',1);
+xlabel('Dwell time (ms)','FontSize',14);
+ylabel('t-statistic (look-chosen vs look-unchosen)','FontSize',14);
+title('Posthoc t-stats across dwell times','FontSize',14);
+legend(contrast_labels_dw_short, 'Location','best','FontSize',12);
+set(gca,'XTick',dwell_times,'FontSize',12);
+saveas(gcf,[report_dir 'Fig_R6_fixation_dwell_sweep.png']);
 
 
-%% check r2 when removing neurons
+%% FIG 2H - check r2 when removing neurons
 
 all_sess = {out_all(:).session}';
 monkey_name = cellfun(@(x) x(1), all_sess, 'UniformOutput', false);
@@ -1281,3 +1389,96 @@ box off; hold off;
 
 saveas(gcf, [report_dir 'Fig_2h_ablation.png']);
 
+%% ═══ Local functions: boxplot figure style ═══════════════════════════════════
+
+function [fg, cm] = fig_cm(W, H)
+% Figure of W x H cm (Arial); cm(x, y, w, h) converts cm to normalized units.
+fg = figure('Units', 'centimeters', 'Position', [2 2 W H], 'Color', 'w', ...
+    'DefaultAxesFontName', 'Arial', 'DefaultTextFontName', 'Arial');
+cm = @(x, y, w, h) [x y w h] ./ [W H W H];
+end
+
+function box_dots(ax, X, pos, box_col, dot_col, links, jit)
+% Sessions x groups data X at x positions pos: grey lines joining each
+% session's values within each group of links, jittered dots, boxplots.
+hold(ax, 'on');
+for i = 1 : size(X, 1)
+    for L = 1 : numel(links)
+        g = links{L};
+        plot(ax, pos(g) + jit(i,g), X(i,g), '-', 'Color', [0.78 0.78 0.78], 'LineWidth', 0.3);
+    end
+end
+for g = 1 : size(X, 2)
+    plot(ax, pos(g) + jit(:,g), X(:,g), 'o', 'MarkerSize', 1.8, 'MarkerFaceColor', dot_col(g,:), ...
+        'MarkerEdgeColor', 'none');
+end
+p0 = get(ax, 'Position');
+h  = boxplot(ax, X, 'Colors', box_col, 'Symbol', '', 'Widths', 0.6, 'Positions', pos);
+set(h, 'LineWidth', 1);
+set(ax, 'PositionConstraint', 'innerposition', 'Position', p0);   % same plot-box size in every panel
+end
+
+function style_box_axes(ax, show_y, ylab, yl, xl)
+% Shared axes style; show_y = false hides the y tick labels (second monkey).
+set(ax, 'FontSize', 10, 'TickDir', 'out', 'Box', 'off', 'LineWidth', 0.5, ...
+    'XColor', 'k', 'YColor', 'k', 'TickLength', [0.015 0.015]);
+if ~isempty(yl), ylim(ax, yl); end
+xlim(ax, xl);
+if show_y
+    ylabel(ax, ylab, 'FontSize', 11);
+else
+    set(ax, 'YTickLabel', []);
+end
+end
+
+function add_brackets(ax, pairs, labels, X, pos)
+% Significance brackets just above the highest point of the compared groups
+% (pairs: nComparisons x 2 group positions); overlapping brackets are raised
+% above each other. The y-limits are then fitted to the data and brackets.
+lo  = min(X(:));  hi = max(X(:));  rg = hi - lo;
+bky = NaN(size(pairs, 1), 1);
+for k = 1 : size(pairs, 1)
+    g      = pos >= min(pairs(k,:)) & pos <= max(pairs(k,:));
+    bky(k) = max(X(:, g), [], 'all') + 0.05*rg;
+    for j = 1 : k - 1        % raise above earlier brackets it overlaps
+        if min(pairs(k,:)) <= max(pairs(j,:)) && min(pairs(j,:)) <= max(pairs(k,:))
+            bky(k) = max(bky(k), bky(j) + 0.10*rg);
+        end
+    end
+    plot(ax, pairs(k, [1 1 2 2]), bky(k) + [-0.025 0 0 -0.025]*rg, 'k-', 'LineWidth', 0.5);
+    text(ax, mean(pairs(k,:)), bky(k) + 0.01*rg, labels{k}, 'HorizontalAlignment', 'center', ...
+        'VerticalAlignment', 'bottom', 'FontSize', 9);
+end
+ylim(ax, [lo - 0.04*rg, max(bky) + 0.09*rg]);
+end
+
+function str = fmt_p(p)
+% p-value label: 'p=0.012' when p >= 0.001, otherwise scientific notation ('p=3.2e-5').
+if p >= 0.001
+    str = sprintf('p=%.3f', p);
+else
+    str = regexprep(sprintf('p=%.1e', p), 'e([-+])0*(\d)', 'e$1$2');
+end
+end
+
+function fig_text(fg, pos, str, fs)
+% Text centred in a box given in normalized figure units.
+ax = axes(fg, 'Position', pos, 'XLim', [0 1], 'YLim', [0 1]);  axis(ax, 'off');
+text(ax, 0.5, 0.5, str, 'FontSize', fs, 'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle');
+end
+
+function state_legend(fg, pos, labels, cols)
+% Boxed legend of colored italic labels.
+ax = axes(fg, 'Position', pos, 'XLim', [0 1], 'YLim', [0 1]);  axis(ax, 'off');  hold(ax, 'on');
+rectangle(ax, 'Position', [0 0 1 1], 'EdgeColor', 'k', 'LineWidth', 0.5);
+for i = 1 : numel(labels)
+    text(ax, 0.08, 1 - (i - 0.5)/numel(labels), labels{i}, 'Color', cols(i,:), 'FontSize', 11, ...
+        'FontAngle', 'italic', 'VerticalAlignment', 'middle');
+end
+end
+
+function save_fig(fg, fname)
+% PNG (300 dpi) and vector PDF (for CorelDRAW / Illustrator).
+% exportgraphics(fg, [fname '.png'], 'Resolution', 300);
+exportgraphics(fg, [fname '.pdf'], 'ContentType', 'vector');
+end

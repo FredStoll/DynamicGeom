@@ -3,6 +3,7 @@
 %
 % Single-neuron ANOVA for probability, flavor, and side encoding;
 % population LDA decoding timecourses and cross-subspace analysis.
+% make Figures S1 and S2 in Stoll, Valluru & Rudebeck (2026)
 
 clear
 
@@ -50,12 +51,7 @@ if ~skip
     [~,idx] = sort(dates);  
     list = list(idx);
 
-    % conds = {'proba_1FC' 'flavor_1FC' 'side_1FC' ; 'chosenproba_2AFC' 'chosenflavor_2AFC' 'chosenside_2AFC'}; 
     conds = {{'proba_1FC' 'flavor_1FC' 'side_1FC'} ; {'chosenproba_2AFC' 'unchosenproba_2AFC' 'chosenflavor_2AFC' 'chosenside_2AFC'}}; 
-    % area2test = {'24c' '6DR' '6DC' '6Va/Vb' '8B' '8A' '46d' '46df'  '46v' '44' '45' '12r' '12m' '12o' '12l' 'AI'  '13l' '13m' '11m/l' 'cd' 'pu' 'AMG'};
-    area2test =      {'24c' '6DR' '6DC'  {'8B' '8A'} {'46d' '46df'}  '46v'   {'44' '45'} {'12r' '12m'} '12o'    '12l'   'AI'  '13l' '13m' '11m/l' 'cd'  'pu'  'AMG'};
-    area2test_name = {'24c' '6DR' '6DC'  '8'         '46d'           '46v'   'IFG'       '12m/r'       '12o'    '12l'   'AI'  '13l' '13m' '11m/l' 'cd'  'pu'  'AMG'};
-    area_group =     {'MFC' 'PMC' 'PMC' 'dlPFC'      'dlPFC'         'dlPFC' 'IFG'       'vlPFC'       'vlPFC'  'vlPFC' 'AI'  'OFC' 'OFC' 'OFC'   'STR' 'STR' 'AMG'};
 
     area2test =      {'24c' {'6DR' '6DC' '6Va/Vb'}  {'8' '8B' '8A' '46d' '46df' '46v'}    {'IFG' '44' '45'} {'12r' '12m' '12m/r' '12o' '12l'}   'AI'  {'13l' '13m' '11m/l'} {'cd'  'pu'}  'AMG'};
     area2test_name = {'MFC' 'PMC' 'dlPFC'  'IFG'       'vlPFC'  'AI'  'OFC'    'STR' 'AMG'};
@@ -95,7 +91,7 @@ if ~skip
     all_fr = [];
     for sess = 1 : length(list)
 
-        clearvars -except param sess list pathspk pathout report_dir anova_res conds info lda_perf lda_tab area2test area2test_name area_group all_fr all_conds all_conds_unch all_conds_both nb lda_res nb_units session
+        clearvars -except param sess list pathspk pathout report_dir anova_res conds info lda_perf lda_tab area2test area2test_name area_group all_fr all_conds all_conds_unch all_conds_both nb lda_res nb_units session fid_log log_cleanup
 
         %- load spiking and behav data for that session
         disp(['Processing session ' num2str(sess) ' of ' num2str(length(list)) '...'])
@@ -242,7 +238,6 @@ if ~skip
                     end
                 end
 
-
                 fr4lda{t}(u,:,:) = fr;
                 param4lda{t} = param_raw(tr2take{t},:);
 
@@ -307,9 +302,9 @@ if ~skip
                 % cross subspace decoding (extract subspace for 1 condition and project the other condition on it before decoding)
                 curr_fr_bin = {};
                 temp =  fr4lda{1}(unit4decoding,:,:);
-                curr_fr_bin{1}= squeeze(nanmean(temp(:,:,param.bin4subspace_decoding(1):param.bin4subspace_decoding(2)),3))'; % get the FR in the bin of interest
+                curr_fr_bin{1}= squeeze(nanmean(temp(:,:,spk.param.bins(2,:)==1 & spk.param.bins(1,:)>=param.bin4subspace_decoding(1) & spk.param.bins(1,:)<=param.bin4subspace_decoding(2)),3))'; % get the FR in the bin of interest
                 temp =  fr4lda{2}(unit4decoding,:,:);
-                curr_fr_bin{2}= squeeze(nanmean(temp(:,:,param.bin4subspace_decoding(1):param.bin4subspace_decoding(2)),3))'; % get the FR in the bin of interest
+                curr_fr_bin{2}= squeeze(nanmean(temp(:,:,spk.param.bins(2,:)==1 & spk.param.bins(1,:)>=param.bin4subspace_decoding(1) & spk.param.bins(1,:)<=param.bin4subspace_decoding(2)),3))'; % get the FR in the bin of interest
                 for cd2 = 1: length(param.cond)
           
                     % compute avg firing rate for cd2
@@ -329,16 +324,22 @@ if ~skip
                     fr_avg_mean = nanmean(fr_avg,1);
                     fr_avg_std = nanstd(fr_avg,0,1);
 
+                    % drop units with no variance across conditions in the window (e.g. silent between 200-700ms):
+                    % z-scoring gives 0/0 = NaN so PCA then fails
+                    unit_ok = fr_avg_std>0 & ~any(isnan(fr_avg),1);
+                    fr_avg = fr_avg(:,unit_ok);
+                    fr_avg_mean = fr_avg_mean(unit_ok);
+                    fr_avg_std = fr_avg_std(unit_ok);
+
                     % norm training
                     fr_avg = (fr_avg - repmat(fr_avg_mean,size(fr_avg,1),1)) ./ repmat(fr_avg_std,size(fr_avg,1),1); % norm FR
                     % norm testing
-                    temp_fr = curr_fr_bin{param.cond{cd}(1)};
+                    temp_fr = curr_fr_bin{param.cond{cd}(1)}(:,unit_ok);
                     temp_fr = (temp_fr - fr_avg_mean) ./ fr_avg_std;
 
                     % extract subspace
                     PC.nComp=1;
                     [PC.eigenvectors,PC.score,PC.eigenvalues,~,PC.explained,PC.mu] = pca(fr_avg,'NumComponents',PC.nComp);
-
 
                     % project all trials of the other condition on the subspace
                     curr_fr_proj = (temp_fr * PC.eigenvectors(:,1:PC.nComp)) ;
@@ -376,7 +377,6 @@ if ~skip
 
     end
 
-
     lda_param = param;
 
     param = spk.param;
@@ -390,7 +390,6 @@ if ~skip
 
     param.fr_conds = all_cond;
 
-    %save([pathout 'anova_res_matchTr.mat'],'anova_res','lda_res','all_fr','area2test','area2test_name','area_group','param','info','nb_units','session','-v7.3')
     save([pathout 'anova_lda.mat'],'anova_res','lda_res','all_fr','area2test','area2test_name','area_group','param','info','nb_units','session','-v7.3')
 
 else
@@ -458,7 +457,7 @@ for t = 1 : length(task)
         end
     end
 
-    %- FIGURE 5B - ANOVA of probability and flavor   
+    %- FIGURE S1a-c - ANOVA of probability and flavor   
     perc_sig{t} = NaN(length(area2test),size(pvals,3),size(pvals,2));
     for ar = 1 : length(area2test)
         for cd = 1 : size(pvals,3)
@@ -552,14 +551,23 @@ end
 saveas(gcf, [report_dir 'Fig_S1abc_timecourse.png']); 
 
 barcol = [100 60 150 ; 150 150 150 ; 250 130 190]/255;
-figure('Position',[949 66 1004 1284]);
-x = 1;
+pair_title = {'Probability' 'Flavor' 'Side'};
+row_h = 4.2;  row_gap = 1.6;  y0 = 1.2;   % cm
+W = 17;
+H = y0 + 3*row_h + 2*row_gap + 1.4;
+fg = figure('Units', 'centimeters', 'Position', [2 2 W H], 'Color', 'w', ...
+    'DefaultAxesFontName', 'Arial', 'DefaultTextFontName', 'Arial');
+cm = @(x, y, w, h) [x y w h] ./ [W H W H];
+
 for c = 1 : length(pair_cd)
-    subplot(length(pair_cd),5,[x:x+2])
+    y = y0 + (length(pair_cd)-c)*(row_h + row_gap);
+
+    %- left: proportion of 1FC-only / both / 2AFC-only among significant neurons
+    ax = axes(fg, 'Position', cm(0.6, y, 8.6, row_h));
     prop_plot = (prop_sig{c,1}(:,1:3)./repmat(sum(prop_sig{c,1}(:,1:3),2),1,3))*100; %- ignore the non significant for both
     prop_plot = prop_plot(:,[1 3 2]);
     [~,order] = sortrows(prop_plot(:,2));
-    b = barh(prop_plot(order,:),'stacked','FaceColor','flat');
+    b = barh(ax, prop_plot(order,:),'stacked','FaceColor','flat','BarWidth',0.8,'LineWidth',0.5);
     for i = 1 : 3
         b(i).CData = barcol(i,:);
     end
@@ -567,34 +575,47 @@ for c = 1 : length(pair_cd)
     for ar = 1 : length(area2test)
         for i = 1 : 3
             if prop_plot(order(ar),i)>0
-                text(sum(prop_plot(order(ar),1:i-1))+prop_plot(order(ar),i)/2,ar,num2str(round(prop_plot(order(ar),i)),2),'Color','w','HorizontalAlignment','center','FontSize',8,'FontAngle','italic');
+                text(ax, sum(prop_plot(order(ar),1:i-1))+prop_plot(order(ar),i)/2,ar,num2str(round(prop_plot(order(ar),i))), ...
+                    'Color','w','HorizontalAlignment','center','FontSize',9,'FontAngle','italic');
             end
         end
     end
-    xlabel('Percent of significant neurons');xlim([0 100])    
-    set(gca,'YTick',[],'FontSize',14,'YDir','reverse');
-    legend({'sig 1FC' 'sig both' 'sig 2AFC'})
-    title([pair_cd{c,1} ' vs ' pair_cd{c,2}])
+    xlim(ax, [0 100]); ylim(ax, [0.4 length(area2test)+0.6]);
+    set(ax,'YTick',[],'FontSize',10,'YDir','reverse','LineWidth',0.5);
+    title(ax, pair_title{c}, 'FontSize', 11, 'FontWeight', 'bold');
+    if c == length(pair_cd), xlabel(ax, 'Percent of significant neurons', 'FontSize', 11); end
+    if c == 1
+        lg = legend(ax, b, {'1FC' 'both' '2AFC'}, 'Orientation', 'horizontal', 'FontSize', 10, ...
+            'FontAngle', 'italic', 'Units', 'centimeters', 'AutoUpdate', 'off');
+        lg.Position(1:2) = [0.6 + (8.6 - lg.Position(3))/2, y + row_h + 0.75];
+        lg.ItemTokenSize = [18 8];
+    end
 
-    x = x + 3;
-    subplot(length(pair_cd),5,[x x+1])
+    %- right: percent of neurons significant in either task (bar: both monkeys, markers: each monkey, white dot: baseline)
+    ax = axes(fg, 'Position', cm(11, y, 5.6, row_h));
     prop_plot_either = (sum(prop_sig{c,1}(:,1:3),2)./sum(prop_sig{c,1},2))*100; %- out of all neurons
-    b = barh(prop_plot_either(order,:),'FaceColor','k');
-    hold on
+    b = barh(ax, prop_plot_either(order,:),'FaceColor','k','BarWidth',0.8);
+    hold(ax, 'on')
     prop_plot_either_bl = (sum(prop_sig_bl{c,1}(:,1:3),2)./sum(prop_sig_bl{c,1},2))*100; %- out of all neurons
-    plot(prop_plot_either_bl(order,:),1:length(area2test),'.','MarkerSize',13,'MarkerFaceColor','w','MarkerEdgeColor','w')
+    plot(ax, prop_plot_either_bl(order,:),1:length(area2test),'.','MarkerSize',6,'MarkerFaceColor','w','MarkerEdgeColor','w')
 
     prop_plot_either_mk = (sum(prop_sig{c,2}(:,1:3),2)./sum(prop_sig{c,2},2))*100; %- monkey M
-    plot(prop_plot_either_mk(order,:),1:length(area2test),'o','MarkerSize',8,'MarkerFaceColor',[.6 .6 .6],'MarkerEdgeColor','none')
+    pM = plot(ax, prop_plot_either_mk(order,:),1:length(area2test),'o','MarkerSize',5,'MarkerFaceColor',[.6 .6 .6],'MarkerEdgeColor','none');
     prop_plot_either_mk = (sum(prop_sig{c,3}(:,1:3),2)./sum(prop_sig{c,3},2))*100; %- monkey X
-    plot(prop_plot_either_mk(order,:),1:length(area2test),'v','MarkerSize',8,'MarkerFaceColor',[.6 .6 .6],'MarkerEdgeColor','none')
+    pX = plot(ax, prop_plot_either_mk(order,:),1:length(area2test),'v','MarkerSize',5,'MarkerFaceColor',[.6 .6 .6],'MarkerEdgeColor','none');
 
-    set(gca,'YTick',1:length(area2test),'YTickLabel',area2test_name(order),'FontSize',12,'YDir','reverse'); 
-    xlim([0 100])
-    x = x + 2;
+    set(ax,'YTick',1:length(area2test),'YTickLabel',area2test_name(order),'FontSize',10,'YDir','reverse', ...
+        'XTick',0:20:100,'LineWidth',0.5);
+    xlim(ax, [0 100]); ylim(ax, [0.4 length(area2test)+0.6]);
+    if c == length(pair_cd), xlabel(ax, 'Percent of significant neurons', 'FontSize', 11); end
+    if c == 1
+        lg = legend(ax, [pM pX b], {'mk M' 'mk X' 'both'}, 'Orientation', 'horizontal', 'FontSize', 10, ...
+            'FontAngle', 'italic', 'Units', 'centimeters', 'AutoUpdate', 'off');
+        lg.Position(1:2) = [11 + (5.6 - lg.Position(3))/2, y + row_h + 0.75];
+        lg.ItemTokenSize = [12 8];
+    end
 end
-
-saveas(gcf, [report_dir 'Fig_S1de_proportions.png']);
+exportgraphics(fg, [report_dir 'Fig_S1de_proportions.pdf'], 'ContentType', 'vector');
 
 figure('Position',[1440 247 642 1039]);
 for c = 1 : length(pair_cd)
@@ -616,33 +637,6 @@ for c = 1 : length(pair_cd)
 end
 
 saveas(gcf, [report_dir 'Fig_S1f_scatter.png']);
-
-%- proportion of cell encoding each param across both tasks - v2 
-% (here we look at the proportion of sig neurons across the whole time considered, 
-% not how many neurons are sig whenever during the stim period)
-% ee = 2 ; % stim on
-% timesub = param.bins(1,:)>time2avg{ee}(1) & param.bins(1,:)<time2avg{ee}(2) & param.bins(2,:)==find(ismember(param.evt,evt2avg{ee}));
-
-% fig(1);
-% for c = 1 : length(pair_cd)
-
-%     findcond_1 = ismember(param.conds{1},pair_cd{c,1});    
-%     findcond_2 = ismember(param.conds{2},pair_cd{c,2});   
-%     perc_sig_evt = [squeeze(mean(perc_sig{1}(:, findcond_1 ,timesub),3)), ...
-%         squeeze(mean(perc_sig{2}(:, findcond_2 ,timesub),3))]; % average proportion of sig neurons across the whole time considered
-
-%     subplot(1,length(pair_cd),c)
-%     line([0 1],[0 1],'Color','k')  ; hold on;box on
-%     for ar = 1 : length(area2test)
-%         %plot3(perc_sig_evt(ar,1),perc_sig_evt(ar,2),perc_sig_evt(ar,3),'o','Color',colorareas(areagrp(ar),:)/255);
-%         plot(perc_sig_evt(ar,1),perc_sig_evt(ar,2),'.','Markersize',25,'Color',colorareas(areagrp(ar),:)/255);
-%         text(perc_sig_evt(ar,1)+.005,perc_sig_evt(ar,2)-.005,area2test_name{ar},'Color',colorareas(areagrp(ar),:)/255);
-%         hold on
-%     end
-%     set(gca,'FontSize',14);xlim([0 0.35]);ylim([0 0.35])
-%     xlabel(pair_cd{c,1})
-%     ylabel(pair_cd{c,2})
-% end
 
 %- plot consistency across monkeys
 figure('Position',[1440 247 642 1039]);x = 0;
@@ -700,10 +694,7 @@ for ar = 1 : length(area2test)
 end
 nb_rec_keep = array2table(nb_rec_keep,'VariableNames',{'mk_M' 'mk_X' 'both_mk'},'RowNames',area2test_name);
 
-
-
-%% Extract neurons with flavor encoding in 1FC and for each of them keep the sign of encoding (J1>J2 or J2>J1)
-
+%% Extract neurons with flavor encoding in 1FC and for each of them keep the sign of encoding (J1>J2 or J2>J1) - used by main_004
 
 fl_neurons = sig_units_evt_all.flavor_1FC==1;
 
@@ -723,7 +714,7 @@ if ~exist([pathout 'flavor_1fc.mat'], 'file')
     save([pathout 'flavor_1fc.mat'],'table_flavor_1FC');
 end
 
-%% Extract neurons with side encoding in 1FC and for each of them keep the sign of encoding (L>R or R>L)
+%% Extract neurons with side encoding in 1FC and for each of them keep the sign of encoding (L>R or R>L) - used by main_004
 
 sd_neurons = sig_units_evt_all.side_1FC==1;
 
@@ -747,8 +738,6 @@ saveas(gcf, [report_dir 'Fig S1g_monkey.png']);
 
 %% Posthoc LDA 
 
-% for LDA, need to get the session name....!
-
 %- some param fro plotting
 step = 20; % step in time for plotting purposes only (write down value every X time bin)
 timesel = [1];
@@ -762,8 +751,8 @@ end
 
 show = {'proba_1FC' 'chosenproba_2AFC' 'unchosenproba_2AFC'};
 
-%- FIGURE 5C - LDA decoding of probability and flavor   
-figure('Position',[415 50 1342 1306]);
+%- FIGURE S2 - LDA decoding of probability and flavor
+fig_S2 = figure('Position',[415 50 1342 1306]); % Fig S2: panels A-D here, E-F in the cross-subspace section
 for cd = 1 : length(show)
     subplot(3,5,1+(cd-1)*5)
     for ar = 1 : length(area2test)
@@ -781,7 +770,6 @@ for cd = 1 : length(show)
             xlab = [xlab param.bins(1,plot_me{ti})];
         end
 
-
     end
     title(show{cd})
     set(gca,'Xtick',1:step:length(xlab),'XtickLabel',xlab(1:step:end)/1000,'XtickLabelRotation',30,'FontSize',12)
@@ -794,7 +782,7 @@ end
 
 %- box and raincloud plot (swapped x/y axes)
 wdth = .65;
-time2test = param.bins(1,:) > 100 & param.bins(1,:) < 800 & param.bins(2,:)==1;
+time2test = param.bins(1,:) >= 200 & param.bins(1,:) <= 700 & param.bins(2,:)==1;
 for cd = 1 : length(show)
     subplot(3,5,[2 3]+(cd-1)*5)
     for ar = 1 : length(area2test)
@@ -905,6 +893,17 @@ for cd = 1 : length(show)
     end
 end
 
+% count number of sessions per area and monkeys and write to log
+modeldata_lda = sortrows(modeldata_lda, {'area','mk'});
+utils_diary(fid_log, '\n========== LDA DECODING: SESSION COUNTS ==========\n');
+for ar = 1 : length(area2test)
+    for m = 1 : length(monks)
+        n_sess_mk = sum(modeldata_lda.area == area2test_name{ar} & modeldata_lda.mk == monks{m});
+        utils_diary(fid_log, '%-10s  %s  %d sessions\n', area2test_name{ar}, monks{m}, n_sess_mk);
+    end
+end
+utils_diary(fid_log, '\n=====================================================\n');
+
 %- Per-area LDA summary: mean +/- SEM, n sessions, t-test vs chance
 utils_diary(fid_log, '\n========== LDA DECODING: PER-AREA SUMMARY ==========\n');
 chance_level = containers.Map( ...
@@ -925,30 +924,229 @@ for cd = 1 : length(show)
 end
 utils_diary(fid_log, '\n=====================================================\n');
 
-%% Cross-subspace decoding
 
+%% Revision - Latency of LDA decoding
+
+% --- parameters ---
+lat_stim_win   = [0 1000];    % ms: window to search for peak / threshold crossing
+lat_bl_win     = [-900 -100]; % ms: pre-stim baseline for the exceed criterion
+lat_exceed_nsd = 2;          % threshold = BL_mean + N * BL_SD per session
+lat_smooth_k   = 5;          % moving-average kernel (bins); set to 1 to skip
+
+stim_bins  = param.bins(1,:) >= lat_stim_win(1) & param.bins(1,:) <= lat_stim_win(2) & param.bins(2,:)==1;
+bl_bins    = param.bins(1,:) >= lat_bl_win(1)   & param.bins(1,:) <= lat_bl_win(2)   & param.bins(2,:)==1;
+stim_times = param.bins(1, stim_bins);   % ms, 1 x n_stimbins
+
+if ~exist('list','var')
+    list = dir([pathspk '*_pool.mat']);
+    dates_tmp = zeros(1,length(list));
+    for i = 1:length(list)
+        dates_tmp(i) = datenum(list(i).name(2:7),'mmddyy');
+    end
+    [~,idx_sort] = sort(dates_tmp);
+    list = list(idx_sort);
+end
+if ~exist('wdth','var'), wdth = .65; end
+
+lat_types  = {'lat_exceed','lat_peak'};
+lat_labels = {'Exceed-BL latency (ms)', 'Peak latency (ms)'};
+
+figure('Position',[415 50 1342 900]);
+for cd = 1 : length(show)
+
+    % --- collect latency per session × area ---
+    lat_peak_all   = [];
+    lat_exceed_all = [];
+    area_lat       = {};
+    mk_lat         = {};
+    sess_lat       = [];
+    nunits_lat     = [];
+
+    for ar = 1 : length(area2test)
+        if isempty(session{ar}), continue; end
+
+        perf_all  = double(lda_res{ar}.(show{cd}).avg_perf);   % n_sess × n_timebins
+        perf_stim = perf_all(:, stim_bins);
+        perf_bl   = perf_all(:, bl_bins);
+        n_sess    = size(perf_stim, 1);
+
+        lp = NaN(n_sess, 1);
+        le = NaN(n_sess, 1);
+        for s = 1 : n_sess
+            row = perf_stim(s,:);
+            if all(isnan(row)), continue; end
+            if lat_smooth_k > 1
+                row = movmean(row, lat_smooth_k, 'omitnan');
+            end
+            % peak latency
+            [~, pk_idx]  = max(row);
+            lp(s)        = stim_times(pk_idx);
+            % exceed-baseline latency
+            bl_mu  = nanmean(perf_bl(s,:));
+            bl_sd  = nanstd(perf_bl(s,:));
+            ex_idx = find(row > bl_mu + lat_exceed_nsd * bl_sd, 1, 'first');
+            if ~isempty(ex_idx)
+                le(s) = stim_times(ex_idx);
+            end
+        end
+
+        lat_peak_all   = [lat_peak_all   ; lp];
+        lat_exceed_all = [lat_exceed_all ; le];
+        area_lat       = [area_lat ; repmat(area2test_name(ar), n_sess, 1)];
+        mk_lat         = [mk_lat   ; arrayfun(@(s) list(s).name(1), session{ar}, 'UniformOutput', false)];
+        sess_lat       = [sess_lat   ; session{ar}];
+        nunits_lat     = [nunits_lat ; double(nb_units{ar})];
+    end
+
+    modeldata_lat = table(lat_peak_all, lat_exceed_all, area_lat, mk_lat, sess_lat, nunits_lat, ...
+        'VariableNames', {'lat_peak','lat_exceed','area','mk','sess','n_units'});
+    modeldata_lat.area = categorical(modeldata_lat.area);
+    modeldata_lat.mk   = categorical(modeldata_lat.mk);
+    modeldata_lat.sess = categorical(modeldata_lat.sess);
+
+    % --- GLME + posthoc for each latency type ---
+    pval2_lat = {zeros(length(area2test_name)), zeros(length(area2test_name))};  % default: no sig
+
+    for lt = 1 : 2
+        valid = ~isnan(modeldata_lat.(lat_types{lt}));
+        % only include areas with >= 2 valid sessions to avoid degenerate contrasts
+        valid_areas_lt = {};
+        for ar = 1 : length(area2test_name)
+            if sum(valid & modeldata_lat.area == area2test_name{ar}) >= 2
+                valid_areas_lt{end+1} = area2test_name{ar};
+            end
+        end
+        if length(valid_areas_lt) < 2, continue; end
+
+        formula  = [lat_types{lt} ' ~ 1 + area + n_units + (1|mk) + (1|sess)'];
+        lme_lat  = fitglme(modeldata_lat(valid,:), formula);
+        utils_diary(fid_log, '\n--- LDA %s: %s ---\n', lat_labels{lt}, show{cd});
+        utils_diary(fid_log, '%s', evalc('disp(anova(lme_lat))'));
+
+        % per-area summary
+        utils_diary(fid_log, '%-10s  %7s  %7s  %4s\n', 'Area','Mean(ms)','SEM(ms)','n');
+        for ar = 1 : length(area2test_name)
+            d_ar = modeldata_lat.(lat_types{lt})(modeldata_lat.area == area2test_name{ar});
+            d_ar = d_ar(~isnan(d_ar));
+            if isempty(d_ar), continue; end
+            utils_diary(fid_log, '%-10s  %7.1f  %7.1f  %4d\n', area2test_name{ar}, ...
+                nanmean(d_ar), nanstd(d_ar)/sqrt(numel(d_ar)), numel(d_ar));
+        end
+
+        % posthoc only on areas with enough data
+        [~,~,~, pv_adj] = utils_areaposthoc(lme_lat, valid_areas_lt, 'n', true);
+        n_va = length(valid_areas_lt);
+        pv_adj(n_va, n_va) = 0;
+        pv_sym = pv_adj + pv_adj';   % symmetrize lower-triangular
+
+        % remap into full-area pval matrix
+        pval2_full = zeros(length(area2test_name));
+        for a1 = 1 : n_va
+            for a2 = 1 : n_va
+                i1 = find(strcmp(area2test_name, valid_areas_lt{a1}));
+                i2 = find(strcmp(area2test_name, valid_areas_lt{a2}));
+                if ~isempty(i1) && ~isempty(i2)
+                    pval2_full(i1,i2) = pv_sym(a1,a2);
+                end
+            end
+        end
+        pval2_lat{lt} = pval2_full;
+    end
+
+    % boxplot
+    for lt = 1 : 2
+        subplot(length(show), 2, (cd-1)*2 + lt)
+        lat_data = modeldata_lat.(lat_types{lt});
+
+        for ar = 1 : length(area2test)
+            d = lat_data(modeldata_lat.area == area2test_name{ar});
+            d = d(~isnan(d));
+            if numel(d) < 2, continue; end
+
+            quartiles  = quantile(d, [0.25 0.75 0.5]);
+            iqr_v      = quartiles(2) - quartiles(1);
+            Xs         = sort(d);
+            wh(1) = min(Xs(Xs > quartiles(1) - 1.5*iqr_v));
+            wh(2) = max(Xs(Xs < quartiles(2) + 1.5*iqr_v));
+            Y     = [quartiles wh];
+            jit   = (rand(size(d)) - 0.5) * (0.65*wdth);
+            curr_col = colorareas(ar,:)/255;
+
+            scatter(d, ar + jit, 'SizeData',10,'MarkerEdgeColor','none','MarkerFaceColor',curr_col); hold on
+            rectangle('Position',[Y(1), ar-wdth*0.5, Y(2)-Y(1), wdth], 'EdgeColor',curr_col,'LineWidth',1.5);
+            line([Y(3) Y(3)], [ar-wdth*0.5, ar+wdth*0.5], 'Color',curr_col,'LineWidth',2);
+            line([Y(2) Y(5)], [ar ar], 'Color',curr_col,'LineWidth',1);
+            line([Y(1) Y(4)], [ar ar], 'Color',curr_col,'LineWidth',1);
+        end
+
+        % significance stars: ar1 slower (higher latency) than ar2 = star above ar1 colored by ar2
+        for ar1 = 1 : length(area2test)
+            d1 = lat_data(modeldata_lat.area == area2test_name{ar1});
+            d1 = d1(~isnan(d1));
+            if isempty(d1), continue; end
+            Ymax1  = max(d1);
+            Ymean1 = nanmean(d1);
+            offset_up = 20;
+            for ar2 = 1 : length(area2test)
+                if ar1==ar2, continue; end
+                if pval2_lat{lt}(ar1,ar2) < 0.01
+                    d2     = lat_data(modeldata_lat.area == area2test_name{ar2});
+                    Ymean2 = nanmean(d2(~isnan(d2)));
+                    if Ymean1 > Ymean2   % ar1 is slower: annotate above ar1
+                        text(Ymax1 + offset_up, ar1, '*', 'Color',colorareas(ar2,:)/255, ...
+                            'FontSize',14,'FontWeight','bold','HorizontalAlignment','center');
+                        offset_up = offset_up + 30;
+                    end
+                end
+            end
+        end
+
+        set(gca,'YTick',1:length(area2test),'YTickLabel',area2test_name,'FontSize',10,'YDir','reverse')
+        ylim([0 length(area2test)+1])
+        xlabel('Latency (ms)')
+        title([lat_labels{lt} ' — ' show{cd}])
+        box on
+    end
+end
+
+saveas(gcf, [report_dir 'Fig_latency_lda.png']);
+
+modeldata_lat = table(lat_peak_all, lat_exceed_all, area_lat, mk_lat, sess_lat, nunits_lat,'VariableNames', {'lat_peak','lat_exceed','area','mk','sess','n_units'});
+modeldata_lat.area = categorical(modeldata_lat.area);
+modeldata_lat.mk   = categorical(modeldata_lat.mk);
+modeldata_lat.sess = categorical(modeldata_lat.sess);
+
+% counting neumber of lat_peak and exceed at 0 or NaN and write to log
+utils_diary(fid_log, '\n========== LDA DECODING: LATENCY COUNTS ==========\n');
+for ar = 1 : length(area2test)
+    for m = 1 : length(monks)
+        n_sess_mk = sum(modeldata_lat.area == area2test_name{ar} & modeldata_lat.mk == monks{m});
+        n_peak0   = sum(modeldata_lat.area == area2test_name{ar} & modeldata_lat.mk == monks{m} & modeldata_lat.lat_peak == 0);
+        n_ex0     = sum(modeldata_lat.area == area2test_name{ar} & modeldata_lat.mk == monks{m} & modeldata_lat.lat_exceed == 0);
+        n_peakNaN = sum(modeldata_lat.area == area2test_name{ar} & modeldata_lat.mk == monks{m} & isnan(modeldata_lat.lat_peak));
+        n_exNaN   = sum(modeldata_lat.area == area2test_name{ar} & modeldata_lat.mk == monks{m} & isnan(modeldata_lat.lat_exceed));
+        utils_diary(fid_log, '%-10s  %s  %d sessions (peak=0: %d, exceed=0: %d, peak=NaN: %d, exceed=NaN: %d)\n', ...
+            area2test_name{ar}, monks{m}, n_sess_mk, n_peak0, n_ex0, n_peakNaN, n_exNaN);
+    end
+end
+% and sum across areas and monkeys 
+utils_diary(fid_log, '%-10s  %s  %d sessions (peak=0: %d, exceed=0: %d, peak=NaN: %d, exceed=NaN: %d)\n', ...
+    'ALL', 'ALL', height(modeldata_lat), sum(modeldata_lat.lat_peak==0), sum(modeldata_lat.lat_exceed==0), ...
+    sum(isnan(modeldata_lat.lat_peak)), sum(isnan(modeldata_lat.lat_exceed)));
+
+%% Cross-subspace decoding
 
 order = {'proba_1FC' 'chosenproba_2AFC' 'unchosenproba_2AFC'};
 
 cds = {'proba_1FC' 'chosenproba_2AFC' 'unchosenproba_2AFC'};
 subspaces = {'proba_1FC' 'chosenproba_2AFC'};
 
-% cds = {'proba_1FC' 'unchosenproba_2AFC'};
-% subspaces = {'proba_1FC' 'unchosenproba_2AFC'};
-% 
-% cds = {'chosenproba_2AFC' 'unchosenproba_2AFC'};
-% subspaces = {'chosenproba_2AFC' 'unchosenproba_2AFC'};
-
-
 avg_perf = NaN(length(area2test),length(cds),2);
 sem_perf = NaN(length(area2test),length(cds),2);
 diff_perf = cell(length(area2test),1);
 
-% fig(1);
 for ar = 1 : length(area2test)
     for cd = 1 : length(cds)
-        % subplot(2,length(area2test),ar+(cd-1)*length(area2test))
-
         perf = squeeze(lda_res{ar}.subspace_perf(:,ismember(order,cds(cd)),ismember(order,subspaces)));
 
         % get mean and sem across sessions in both dimensions
@@ -957,33 +1155,60 @@ for ar = 1 : length(area2test)
 
         % perf difference
         diff_perf{ar}(:,cd) = perf(:,1) - perf(:,2); 
-        
-        % plot(perf(:,1),perf(:,2),'.','Markersize',10,'Color',colorareas(ar,:)/255); hold on
-        % xlim([0 1]);ylim([0 1])
-        % line([0 1],[0 1],'Color','k')
     end
 end
 
-%- Cross-subspace stats: per area, paired t-test between the two subspaces
-utils_diary(fid_log, '\n========== CROSS-SUBSPACE DECODING STATS ==========\n');
-utils_diary(fid_log, 'Subspaces compared: %s  vs  %s\n', subspaces{1}, subspaces{2});
-for cd = 1 : length(cds)
-    utils_diary(fid_log, '\nDecoding: %s\n', cds{cd});
-    utils_diary(fid_log, '%-10s  %9s  %9s  %8s  %6s\n', 'Area', [subspaces{1} '%'], [subspaces{2} '%'], 'p_paired', 'n');
+%- Cross-subspace stats: decoding vs chance, only when the subspace comes from the other task
+cross_pairs = {'proba_1FC' 'chosenproba_2AFC' ;   % {decoded condition, subspace}
+               'chosenproba_2AFC' 'proba_1FC'};
+utils_diary(fid_log, '\n========== CROSS-SUBSPACE DECODING STATS (vs chance) ==========\n');
+pval_cs = []; % [p model area]
+coef_cs = cell(size(cross_pairs,1),1);
+for m = 1 : size(cross_pairs,1)
+    modeldata_cs = table();
     for ar = 1 : length(area2test)
-        perf_cs = squeeze(lda_res{ar}.subspace_perf(:, ismember(order,cds(cd)), ismember(order,subspaces)));
-        valid = ~isnan(perf_cs(:,1)) & ~isnan(perf_cs(:,2));
-        n_cs = sum(valid);
-        if n_cs < 2, continue; end
-        mu1 = nanmean(perf_cs(valid,1)) * 100;
-        mu2 = nanmean(perf_cs(valid,2)) * 100;
-        [~, p_pair] = ttest(perf_cs(valid,1), perf_cs(valid,2));
-        utils_diary(fid_log, '%-10s  %9.1f  %9.1f  %8.4f  %6d\n', area2test_name{ar}, mu1, mu2, p_pair, n_cs);
+        if isempty(session{ar}), continue; end
+        perf_sess = double(lda_res{ar}.subspace_perf(:, ismember(order,cross_pairs(m,1)), ismember(order,cross_pairs(m,2))));
+        n_sess    = length(perf_sess);
+        mk_sess   = arrayfun(@(s) list(s).name(1), session{ar}, 'UniformOutput', false);
+        modeldata_cs = [modeldata_cs ; table(perf_sess - chance_level(cross_pairs{m,1}), repmat(area2test_name(ar), n_sess, 1), ...
+            mk_sess, session{ar}, double(nb_units{ar}), 'VariableNames', {'perf_c','area','mk','sess','n_units'})];
+    end
+    modeldata_cs = modeldata_cs(~isnan(modeldata_cs.perf_c),:);
+    modeldata_cs.n_units = modeldata_cs.n_units - mean(modeldata_cs.n_units); % centred: area estimates at the average decoder size
+    modeldata_cs.area = categorical(modeldata_cs.area);
+    modeldata_cs.mk   = categorical(modeldata_cs.mk);
+    modeldata_cs.sess = categorical(modeldata_cs.sess);
+
+    lme_cs = fitglme(modeldata_cs, 'perf_c ~ -1 + area + n_units + (1|mk) + (1|sess)', 'DummyVarCoding', 'full');
+    if sum(startsWith(lme_cs.Coefficients.Name,'area_')) ~= numel(categories(modeldata_cs.area))
+        error('Cross-subspace GLME: missing area coefficients');
+    end
+    coef_cs{m} = lme_cs.Coefficients;
+    for ar = 1 : length(area2test)
+        idx = strcmp(coef_cs{m}.Name, ['area_' area2test_name{ar}]);
+        if any(idx), pval_cs = [pval_cs ; coef_cs{m}.pValue(idx) m ar]; end
     end
 end
-utils_diary(fid_log, '\n====================================================\n');
+[~, ~, pval_cs(:,4)] = utils_fdr_bh(pval_cs(:,1)); % adjusted p in column 4
 
-% plot the avg with sem
+for m = 1 : size(cross_pairs,1)
+    utils_diary(fid_log, '\nDecoding %s on %s subspace (chance = %.0f%%)\n', cross_pairs{m,1}, cross_pairs{m,2}, chance_level(cross_pairs{m,1})*100);
+    utils_diary(fid_log, 'Model: perf - chance ~ -1 + area + n_units + (1|mk) + (1|sess)\n');
+    utils_diary(fid_log, '%-10s  %8s  %7s  %7s  %5s  %9s  %9s\n', 'Area', 'Est(%)', 'SE(%)', 't', 'DF', 'p', 'p_FDR');
+    for ar = 1 : length(area2test)
+        idx = strcmp(coef_cs{m}.Name, ['area_' area2test_name{ar}]);
+        row = pval_cs(:,2)==m & pval_cs(:,3)==ar;
+        if ~any(idx), continue; end
+        utils_diary(fid_log, '%-10s  %8.1f  %7.1f  %7.2f  %5d  %9.2e  %9.2e\n', area2test_name{ar}, coef_cs{m}.Estimate(idx)*100, ...
+            coef_cs{m}.SE(idx)*100, coef_cs{m}.tStat(idx), coef_cs{m}.DF(idx), pval_cs(row,1), pval_cs(row,4));
+    end
+end
+utils_diary(fid_log, '\nFDR across all areas of both models (n = %d tests)\n', size(pval_cs,1));
+utils_diary(fid_log, '\n===============================================================\n');
+
+% plot the avg with sem (back on the Fig S2 figure: the latency figure was opened in between)
+figure(fig_S2);
 for cd = 1 : length(cds)
     subplot(3,5,[4 5]+(cd-1)*5)
 
@@ -1004,7 +1229,8 @@ for cd = 1 : length(cds)
     grid on
 end
 
-saveas(gcf, [report_dir 'Fig_S2_subspace.png']); 
+exportgraphics(fig_S2, [report_dir 'Fig_S2_subspace.pdf'], 'ContentType', 'vector');
+% saveas(fig_S2, [report_dir 'Fig_S2_subspace.png']);
 
 fig(1)
 %- plot the difference in performance between the two subspaces (line histogram)
@@ -1024,4 +1250,5 @@ end
 
 saveas(gcf, [report_dir 'Fig_extra_subspacediff.png']); 
 
-fclose(fid_log);  % explicit close (log_cleanup onCleanup is backup)
+fclose(fid_log); 
+

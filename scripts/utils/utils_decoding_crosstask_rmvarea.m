@@ -204,8 +204,58 @@ for u = 1 : length(area2rmv)+1
      
          % Calculate accuracy
          accuracy(fold) = sum(predicted_labels == y_test) / length(y_test);
+
+         % -----------------------------------------------------------------
+         % CONTINUOUS (LINEAR) DECODER, RICH & WALLIS PDF-BASED (1FC TRIALS) - Fig S4
+         % -----------------------------------------------------------------
+         if fold <= param.kfold
+             % Map class indices (1..5) to continuous probabilities (10..90)
+             y_train_cont = labels(y_train)';
+             y_test_cont  = labels(y_test)';
+
+             % 1. Fit Linear Model (OLS via SVD / Pseudoinverse)
+             X_tr_design = [ones(size(X_train, 1), 1), X_train];
+             X_te_design = [ones(size(X_test, 1), 1), X_test];
+             
+             b_lin = pinv(X_tr_design) * y_train_cont;
+             
+             % 2. Get continuous predictions on training set to fit PDFs
+             pred_tr_raw = X_tr_design * b_lin;
+
+             % 3. Estimate mean and std for each class distribution (Rich & Wallis)
+             mu_c = zeros(1, length(labels));
+             sigma_c = zeros(1, length(labels));
+             for c = 1:length(labels)
+                 idx_c = (y_train == c);
+                 mu_c(c) = mean(pred_tr_raw(idx_c));
+                 sigma_c(c) = std(pred_tr_raw(idx_c));
+                 if sigma_c(c) < 1e-4 % Guard against zero variance
+                     sigma_c(c) = 1e-4;
+                 end
+             end
+
+             % 4. Predict continuous values on test set
+             pred_lin_raw = X_te_design * b_lin;
+
+             % 5. Categorize test trials using Gaussian PDFs
+             prob_c = zeros(length(pred_lin_raw), length(labels));
+             for c = 1:length(labels)
+                 prob_c(:, c) = normpdf(pred_lin_raw, mu_c(c), sigma_c(c));
+             end
+             [~, pred_lin_cat] = max(prob_c, [], 2); % Category with max PDF
+
+             % Store fold outputs
+             out_cmp(fold).y_test_cat   = single(y_test);
+             out_cmp(fold).y_test_cont  = single(y_test_cont);
+             out_cmp(fold).pred_lda_cat = single(predicted_labels);
+             out_cmp(fold).pred_lin_raw = single(pred_lin_raw);
+             out_cmp(fold).pred_lin_cat = single(pred_lin_cat);
+         end
+
      end
-     
+
+     out(1,u).decoding_cmp = out_cmp; % LDA vs linear predictions for each fold (Fig S4, main_006)
+
      disp(['Mean cross-validation (1FC-1FC) accuracy: ', num2str(mean(accuracy(1:param.kfold))) ' +/- ' num2str(std(accuracy(1:param.kfold)))]);
      disp(['All trials accuracy: ', num2str(accuracy(param.kfold+1)) ]);
      
@@ -377,6 +427,43 @@ for u = 1 : length(area2rmv)+1
 
      out(1,u).states_time = time(time_state_dectection);
      out(1,u).cond = cond(ismember(cond.trial,out(1,u).keepTr),{'trial','chosenproba_2AFC','unchosenproba_2AFC','chosenflavor_2AFC','unchosenflavor_2AFC','chosenside_2AFC'});
+
+
+     %% Topology of the probability centroids (response to reviewers, Fig R5)
+     if u == length(area2rmv)+1
+
+        % --- TOPOLOGY & REPRESENTATIONAL GEOMETRY (WITHIN SESSION 'u') ---
+
+        % 1. Extract class centroids (Means: Classes x Neurons)
+        Mu = classifiers{end}.Mu; 
+
+        % 2. Calculate neural distances between probability states
+        neural_dists = pdist(Mu, 'euclidean'); 
+
+        % 3. Calculate True Probability distances 
+        % IMPORTANT: Replace these with your actual probability bin centers
+        true_probs = [0.1, 0.3, 0.5, 0.7, 0.9]; 
+        true_prob_dists = pdist(true_probs'); 
+
+        % 4. Correlate neural distance with mathematical probability distance
+        [rho, pval] = corr(true_prob_dists', neural_dists', 'Type', 'Spearman');
+
+        % 5. PCA Projection for linearity check
+        [~, score, ~, ~, explained] = pca(Mu);
+
+        % 6. Save variables to the 'out' structure (Skipping figures here)
+        out(1,u).topology.neural_dists = neural_dists;
+        out(1,u).topology.true_prob_dists = true_prob_dists;
+        out(1,u).topology.rho = rho;
+        out(1,u).topology.pval = pval;
+        out(1,u).topology.pca_explained = explained;
+
+        % Optional: Save the first 2 PC scores to look at the average shape later
+        out(1,u).topology.pca_score = score(:, 1:min(2, size(score,2)));
+     else
+        
+        out(1,u).topology = [];
+     end
 
     % subplot(7,7,u );
     % col = [100 200 160 ; 240 90 90 ; 0 0 0 ]/255;

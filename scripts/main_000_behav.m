@@ -67,15 +67,23 @@ else
 
     for sess = 1 : length(list)
     
-        clearvars -except sess list pathspk choice_bias norm preference saccadeTable saccade_pb pathout currentPath report_dir overwrite
+        clearvars -except sess list pathspk choice_bias norm preference saccadeTable saccade_pb pathout currentPath report_dir overwrite fid_log log_cleanup
         
         %- load spiking and behav data for that session
         disp(['Processing session ' num2str(sess) ' of ' num2str(length(list)) '...'])
         spk = load([pathspk list(sess).name],'cond','info');
 
         if istable(spk.cond)
+            task_all       = spk.cond.task;
+            chosenside_all = spk.cond.chosenside_2AFC;
             spk.cond = table2array(spk.cond);
         end
+
+        %- side bias: proportion of 2AFC trials where side 1 was chosen (0.5 = unbiased)
+        is2afc    = task_all==2 & ~isnan(chosenside_all);
+        n_2afc    = sum(is2afc);
+        side_bias = mean(chosenside_all(is2afc)==1); % NaN if no valid 2AFC trials
+
         probaJ1 = NaN(length(spk.cond),1); % Initialize probaJ1 to NaN
         probaJ2 = NaN(length(spk.cond),1); % Initialize probaJ2 to NaN
 
@@ -108,6 +116,18 @@ else
         T = table(choice==1,logpb,norm(probaJ1),norm(probaJ2),'VariableNames',{'choice','prob','probaJ1','probaJ2'}); % create a table with choice and log odds of the probabilities
     % T.choice=categorical(T.choice);
 
+        % REVISION: Fit without penalty first to detect if perfect separation occurs
+        lastwarn('', '');
+        warning('off', 'stats:glmfit:PerfectSeparation');
+        warning('off', 'stats:glmfit:IterationLimit');
+        mdl_check = fitglm(T,'choice ~ 1 + prob','Distribution','binomial','Link','logit');
+        [~, warnId] = lastwarn;
+        separation_flag = contains(warnId, 'PerfectSeparation') || contains(warnId, 'IterationLimit');
+        warning('on', 'stats:glmfit:PerfectSeparation');
+        warning('on', 'stats:glmfit:IterationLimit');
+        % -------------------------------------
+
+        % full model with interaction term, using Jeffreys prior to handle potential separation pbs
         lastwarn('', '');
         mdl = fitglm(T,'choice ~ 1 + probaJ1*probaJ2','Distribution','binomial','Link','logit','LikelihoodPenalty','jeffreys-prior');
         mdl2 = fitglm(T,'choice ~ 1 + prob','Distribution','binomial','Link','logit','LikelihoodPenalty','jeffreys-prior');
@@ -152,8 +172,11 @@ else
         [predictedP,~] = predict(mdl2,tab);
 
         % make a table with session name, choice bias, probability model metrics, and predictedP
-        preference = [preference ; table(spk.info.session(1), choice_bias, proba_r2 , proba_tstat,  proba_est, bias_point, indifference_ratio, {predictedP}, ...
-            'VariableNames', {'session', 'choice_bias', 'proba_r2','proba_tstat',  'proba_est', 'bias_point', 'indifference_ratio', 'predictedP'})];
+        preference = [preference ; table(spk.info.session(1), choice_bias, proba_r2 , proba_tstat,  proba_est, bias_point, indifference_ratio, {predictedP}, separation_flag, side_bias, n_2afc, ...
+            'VariableNames', {'session', 'choice_bias', 'proba_r2','proba_tstat',  'proba_est', 'bias_point', 'indifference_ratio', 'predictedP', 'separation_flag', 'side_bias', 'n_2afc'})];
+        % make a table with session name, choice bias, probability model metrics, and predictedP
+        %preference = [preference ; table(spk.info.session(1), choice_bias, proba_r2 , proba_tstat,  proba_est, bias_point, indifference_ratio, {predictedP}, ...
+        %    'VariableNames', {'session', 'choice_bias', 'proba_r2','proba_tstat',  'proba_est', 'bias_point', 'indifference_ratio', 'predictedP'})];
 
     end
 
@@ -284,10 +307,12 @@ utils_diary(fid_log, '%s', evalc('disp(anova_hesit)'));
 %compute overall proportion of saccade>1
 nHesit = NaN(size(saccade_pb));
 pHesit = NaN(size(saccade_pb));
+nQuick = NaN(size(saccade_pb));
 
 for sess = 1:length(saccade_pb)
     pHesit(sess) = 100*(sum(saccade_pb{sess}(:,1)>1) / length(saccade_pb{sess}(:,1)));
     nHesit(sess) = sum(saccade_pb{sess}(:,1)>1);
+    nQuick(sess) = sum(saccade_pb{sess}(:,1)==1);
 end
 
 % plot that
@@ -317,52 +342,9 @@ for i = 1:numel(monkey_names)
     mean_val = mean(pHesit(idx), 'omitnan');
     std_val = std(pHesit(idx), 'omitnan');
     nb_hes = sum(nHesit(idx));
-    utils_diary(fid_log, 'Monkey: %s, Mean+std: %.2f+%.2f, Total Trials: %d\n', monkey_names{i}, mean_val, std_val, nb_hes);
+    nb_quick = sum(nQuick(idx));
+    utils_diary(fid_log, 'Monkey: %s, Mean+std: %.2f+%.2f, n Hesitation Trials: %d, n Quick Trials: %d\n', monkey_names{i}, mean_val, std_val, nb_hes, nb_quick );
 end
-
-%%%%%%% NOT CENTERED YET .... Should try to do it! 
-% % for each session, bin log(pb) into 5 bins and compute average saccade number
-% num_bins = 4;
-% binned_saccades = NaN(length(saccade_pb), num_bins);
-% bin_edges = linspace(0, max(cellfun(@(x) max(x(:,2)), saccade_pb)), num_bins+1);
-
-% for sess = 1:length(saccade_pb)
-%     data = saccade_pb{sess};
-%     [~, ~, bin_idx] = histcounts(data(:,2), bin_edges);
-%     avg_saccades = arrayfun(@(b) mean(data(bin_idx == b, 1)), 1:num_bins);
-%     binned_saccades(sess, :) = avg_saccades;
-% end
-% % monkey names from list.name(1)
-% monkey_names = cellfun(@(x) x(1), {list.name}, 'UniformOutput', false);
-
-
-% % boxplot of binned_saccades by monkey and bin
-% monkey_types = unique(monkey_names);
-% for m = 1:numel(monkey_types)
-%     subplot(2,5,5+(m-1)*5);
-
-%     hold on;
-%     idx_monkey = strcmp(monkey_names, monkey_types{m});
-%     data = binned_saccades(idx_monkey, :);
-
-%     mean_vals = mean(data, 1, 'omitnan');
-%     sem_vals = std(data, 0, 1, 'omitnan') ./ sqrt(sum(~isnan(data), 1));
-
-%     % Plot dots instead of bars, using main color
-%     errorbar(1:num_bins, mean_vals, sem_vals, 'o', ...
-%         'MarkerFaceColor', main_colors(monkey_types{m}), ...
-%         'MarkerEdgeColor', 'none', ...
-%         'Color', main_colors(monkey_types{m}), ...
-%         'LineWidth', 1.5, ...
-%         'MarkerSize', 10);
-
-%     xlabel('log(ProbaJ1/ProbaJ2) bins');
-%     ylabel('Average Number of Saccades');
-%     set(gca, 'FontSize', 16);
-%     hold off;
-%     ylim([1 1.1])
-% end
-
 
 % Save the main behavior summary figure in the report_000 folder.
 fig_main = figure(1);
@@ -370,102 +352,20 @@ saveas(fig_main, [report_dir 'Fig_1bcdf_behav.png']);
 
 % fig(1);plot(preference.choice_bias,preference.bias_point,'o','MarkerFaceColor',[0.5 0.5 0.5],'MarkerEdgeColor','none');
 
-
-%% PSTH
-
-% list = dir([pathspk '*_spk.mat']);
-
-% % reorder files by dates 
-% for i = 1 : length(list)
-%     dates(i) = datenum(list(i).name(2:7),'mmddyy');
-% end
-% [~,idx] = sort(dates);  
-% list = list(idx);
-
-% % set parameters
-% param.min_nbTr = 50;
-% %param.task = {'1FC' '2AFC'}; % '1FC';
-% param.cond = {'task' 'proba_1FC' 'flavor_1FC' 'side_1FC' 'chosenproba_2AFC' 'chosenflavor_2AFC' 'chosenside_2AFC'};
-% param.evt = {'stim_on' 'resp_fix' 'fb_on' 'rew_on'};
-% param.pre = [750 750 750 750 ]; % pre-stimulus time (ms)
-% param.post = [1250 1250 750 1000]; % post-stimulus time (ms)
-% param.binsize = 200; % bins size (ms)
-% param.step = 10; % step size (ms)
-% param.sdf = 20; % smooth param for sdf (ms)
-
-% param.bins =[];
-% for i = 1 : length(param.pre)
-%     param.bins = [param.bins , [-param.pre(i):param.step:param.post(i)-param.binsize ; i*ones(1,length(-param.pre(i):param.step:param.post(i)-param.binsize))]];
-% end
-
-% % load the files and extract the info
-% for sess = 50% length(list)
-
-%     clearvars -except sess list pathspk area2test param anova_res nb lda_res nb_units session pathout overwrite currentPath
+num_sep = sum(preference.separation_flag);
+num_sep_monkey = arrayfun(@(m) sum(preference.separation_flag(strcmp(monkey, m))), monkey_names);
+total_sess = height(preference);
+utils_diary(fid_log, '\n--- Jeffreys Prior / Separation Check ---\n');
+utils_diary(fid_log, 'Perfect separation (so need Jeffreys prior) occurred in %d of %d sessions (%.1f%%).\n\n', num_sep, total_sess, (num_sep/total_sess)*100);
+fprintf('\nSeparation occurred in %d of %d sessions (%.1f%%).\n\n', num_sep, total_sess, (num_sep/total_sess)*100);
+fprintf('Per monkey:\n');
+for m = 1:numel(monkey_names)
+    fprintf('Monkey %s: %d of %d sessions (%.1f%%)\n', monkey_names{m}, num_sep_monkey(m), sum(strcmp(monkey, monkey_names{m})), (num_sep_monkey(m)/sum(strcmp(monkey, monkey_names{m})))*100);
+end
 
 
-%     %- load spiking and behav data for that session
-%     disp(['Plotting session ' num2str(sess) ' of ' num2str(length(list)) '...'])
-%     spk = load([pathspk list(sess).name]);
+%% spike statistics (fano, fr, burstiness)
 
-%     %- take the trials 2 consider and variable of interest
-%     for cd = 1 : length(param.cond)
-%         idx_cond{cd} = ismember(spk.behav.trialtype_header,param.cond{cd});
-%     end
-%     completed_tr = spk.behav.trialtype(:,ismember(spk.behav.trialtype_header,'brk'))==0 & ismember(spk.behav.trialtype(:,ismember(spk.behav.trialtype_header,'task')),[1 2]);
-
-%     %- condition and timestamp of event
-%     cond = [];
-%     for cd = 1 : length(param.cond)
-%         cond(:,cd) = spk.behav.trialtype(:,idx_cond{cd});
-%     end
-%     evt_time = [];
-%     for e = 1 : length(param.evt)
-%         evt_time(:,e) = spk.behav.t_evt.(param.evt{e})(:);
-%     end
-
-%     %- remove unwanted probas
-%     if sum(ismember(param.cond,'proba_1FC'))~=0 
-%         % idx_tr1 = ~ismember(cond(:,ismember(param.cond,'proba_1FC')),[10 30 50 70 90]) & ismember(cond(:,ismember(param.cond,'task')),1)   ;
-%         idx_tr1 = ~ismember(cond(:,ismember(param.cond,'proba_1FC')),[30 50 70 90]) & ismember(cond(:,ismember(param.cond,'task')),1)   ;
-%     else
-%         idx_tr1 = zeros(size(cond,1),1);
-%     end
-%     if sum(ismember(param.cond,'chosenproba_2AFC'))~=0 
-%         idx_tr2 = ~ismember(cond(:,ismember(param.cond,'chosenproba_2AFC')),[30 50 70 90]) & ismember(cond(:,ismember(param.cond,'task')),2)   ;
-%     else
-%         idx_tr2 = zeros(size(cond,1),1);
-%     end
-%     idx_tr = idx_tr1 | idx_tr2 | ~completed_tr;
-%     cond(idx_tr,:)=[];
-%     evt_time(idx_tr,:)=[];
-
-
-%         %- create conditions and threshold for subplot
-%         conds=(cond(:,1)*100 );
-%         conds(conds==100)=conds(conds==100)+cond(conds==100,2);
-%         conds(conds==200)=conds(conds==200)+cond(conds==200,5);
-
-%         evt2take = evt_time(:,1);
-
-%         %- general params
-%         evtName = param.evt{1};
-
-%         pre = 750;
-%         post = 1250;
-%     for n = 25 % 1 : length(spk.unit)
-%             Unit = spk.unit{n};
-%             fighandle1 = utils_rasterPSTH_2bins(Unit,evt2take,evtName,conds',200,pre,post);
-%         % pause;
-%         disp(n)
-%         % close(fighandle1)
-%     end
-% end
-
-
-
-
-%%
 if overwrite
     list = dir([pathspk '*_spk.mat']);
 
@@ -497,7 +397,7 @@ if overwrite
     % load the files and extract the info
     for sess = 1 : length(list)
 
-        clearvars -except sess list pathspk area2test param anova_res nb lda_res nb_units session path2save overwrite info currentPath
+        clearvars -except sess list pathspk area2test param anova_res nb lda_res nb_units session path2save overwrite info currentPath pathout report_dir fid_log log_cleanup
 
         %- load spiking and behav data for that session
         disp(['Processing session ' num2str(sess) ' of ' num2str(length(list)) '...'])
@@ -579,32 +479,6 @@ if overwrite
                     end
                     burstiness(u,t) = nanmean(bursti);
                 end
-
-                % % interspike interval from trialspx_raw (which is a nspk x 1 matrix of spike timestamp)
-                % for t = 1 : 2
-                %     isi{t} = diff(trialspx_raw(trialspx_raw(:,2)==t,1));
-                %     isi{t}(isi{t}>1)=[];
-
-                %     % Calculate burstiness and pause proportions
-                %     log_isi = log10(isi{t});
-                %     norm_log_isi = log_isi - mean(log_isi);
-                    
-                %     burst_thresh = prctile(norm_log_isi, 99.5);
-                %     pause_thresh = prctile(norm_log_isi, 0.5);
-                    
-                %     prop_burst(u,t) = sum(norm_log_isi > burst_thresh) / length(norm_log_isi);
-                %     prop_pause(u,t)  = sum(norm_log_isi < pause_thresh) / length(norm_log_isi);
-                % end
-
-                % bursts = utils_burstdetection(trialspx_raw(trialspx_raw(:,2)==t,1))
-                % spikes = (spk.unit{u}.timestamps)';
-                % evt_switch = evt_time(find(cond(:,1)==2,1,'first'),1)-3; % 3 seconds before "task switch" (defined as stim_on of first 2AFC trial)
-                
-                
-                % [~,burstiness(u,1)] = utils_burstdetection(spikes(spikes<evt_switch));
-                % [~,burstiness(u,2)] = utils_burstdetection(spikes(spikes>evt_switch));
-
-                % utils_plotbursts(spikes, bursts)
 
                 % get fano factor for 1FC and 2AFC
                 for t = 1 : 2
@@ -896,15 +770,6 @@ ylabel('Probability')
 legend('1FC', '2AFC')
 title('Fano Factor')
 hold off;
-
-% Subplot 3: Burstiness
-% logit transform info.burstiness_1FC and info.burstiness_2AFC (remove the 0 or logit fail)
-% info.burstiness_1FC(info.burstiness_1FC==0) = 0.000001;
-% info.burstiness_2AFC(info.burstiness_2AFC==0) = 0.000001;
-% info.burstiness_1FC(info.burstiness_1FC==1) = 0.999999;
-% info.burstiness_2AFC(info.burstiness_2AFC==1) = 0.999999;
-% info.burstiness_1FC = log(info.burstiness_1FC ./ (1 - info.burstiness_1FC));
-% info.burstiness_2AFC = log(info.burstiness_2AFC ./ (1 - info.burstiness_2AFC));
 
 subplot(1,3,3)
 [f1, x1] = hist(info.burstiness_1FC, 30);
