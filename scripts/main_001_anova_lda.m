@@ -548,7 +548,7 @@ for c = 1 : length(pair_cd)
     end
 end
 
-saveas(gcf, [report_dir 'Fig_S1abc_timecourse.png']); 
+exportgraphics(gcf, [report_dir 'Fig_S1abc_timecourse.pdf'], 'ContentType', 'vector');
 
 barcol = [100 60 150 ; 150 150 150 ; 250 130 190]/255;
 pair_title = {'Probability' 'Flavor' 'Side'};
@@ -636,7 +636,7 @@ for c = 1 : length(pair_cd)
     ylabel(pair_cd{c,2})
 end
 
-saveas(gcf, [report_dir 'Fig_S1f_scatter.png']);
+exportgraphics(gcf, [report_dir 'Fig_S1f_scatter.pdf'], 'ContentType', 'vector');
 
 %- plot consistency across monkeys
 figure('Position',[1440 247 642 1039]);x = 0;
@@ -674,7 +674,7 @@ for c = 1 : length(pair_cd)
     title(pair_cd{c,2})
 end
 
-saveas(gcf, [report_dir 'Fig S1g_monkey.png']); 
+exportgraphics(gcf, [report_dir 'Fig_S1g_monkey.pdf'], 'ContentType', 'vector');
 
 % table with counts of analyzed neurons per monkey and combined across areas (using table info)
 nb_rec = [];
@@ -733,8 +733,6 @@ table_side_1FC = [array2table(unit_nb_side,'VariableNames',{'unit_nb'}) , info(u
 if ~exist([pathout 'side_1fc.mat'], 'file')
     save([pathout 'side_1fc.mat'],'table_side_1FC');
 end
-
-saveas(gcf, [report_dir 'Fig S1g_monkey.png']); 
 
 %% Posthoc LDA 
 
@@ -951,7 +949,7 @@ if ~exist('wdth','var'), wdth = .65; end
 lat_types  = {'lat_exceed','lat_peak'};
 lat_labels = {'Exceed-BL latency (ms)', 'Peak latency (ms)'};
 
-figure('Position',[415 50 1342 900]);
+figure('Position',[415 50 1100 900]);
 for cd = 1 : length(show)
 
     % --- collect latency per session × area ---
@@ -1109,7 +1107,7 @@ for cd = 1 : length(show)
     end
 end
 
-saveas(gcf, [report_dir 'Fig_latency_lda.png']);
+exportgraphics(gcf, [report_dir 'Fig_R2_latency_lda.pdf'], 'ContentType', 'vector');
 
 modeldata_lat = table(lat_peak_all, lat_exceed_all, area_lat, mk_lat, sess_lat, nunits_lat,'VariableNames', {'lat_peak','lat_exceed','area','mk','sess','n_units'});
 modeldata_lat.area = categorical(modeldata_lat.area);
@@ -1230,7 +1228,6 @@ for cd = 1 : length(cds)
 end
 
 exportgraphics(fig_S2, [report_dir 'Fig_S2_subspace.pdf'], 'ContentType', 'vector');
-% saveas(fig_S2, [report_dir 'Fig_S2_subspace.png']);
 
 fig(1)
 %- plot the difference in performance between the two subspaces (line histogram)
@@ -1248,7 +1245,7 @@ for cd = 1 : length(cds)
     title(['Diff ' cds{cd}])
 end
 
-saveas(gcf, [report_dir 'Fig_extra_subspacediff.png']); 
+% exportgraphics(gcf, [report_dir 'Fig_extra_subspacediff.pdf'], 'ContentType', 'vector');
 
 fclose(fid_log); 
 

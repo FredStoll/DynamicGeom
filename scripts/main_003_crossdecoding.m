@@ -732,13 +732,13 @@ for p = 1 : length(param.param2decode)
 
         drawnow;
         if metric == 1 && strcmp(param_name, 'chosenflavor')
-            fname_main = [report_dir 'Fig_3c_CCGP.png'];
+            fname_main = [report_dir 'Fig_3c_CCGP.pdf'];
         elseif metric == 1 && strcmp(param_name, 'chosenside')
-            fname_main = [report_dir 'Fig_3d_CCGP.png'];
+            fname_main = [report_dir 'Fig_3d_CCGP.pdf'];
         else
-            fname_main = [report_dir 'Fig_main_' metric_names{metric} '_' param_name '.png'];
+            fname_main = [report_dir 'Fig_main_' metric_names{metric} '_' param_name '.pdf'];
         end
-        saveas(fig_main, fname_main);
+        exportgraphics(fig_main, fname_main, 'ContentType', 'vector');
         fprintf('  Saved: %s\n', fname_main);
 
     end  % metric
@@ -773,13 +773,13 @@ for p = 1 : length(param.param2decode)
 
     drawnow;
     if strcmp(param_name, 'chosenflavor')
-        fname_genrz = [report_dir 'Fig_S6b_generalization.png'];
+        fname_genrz = [report_dir 'Fig_S7b_generalization.pdf'];
     elseif strcmp(param_name, 'chosenside')
-        fname_genrz = [report_dir 'Fig_S6c_generalization.png'];
+        fname_genrz = [report_dir 'Fig_S7c_generalization.pdf'];
     else
-        fname_genrz = [report_dir 'Fig_genrz_summary_' param_name '.png'];
+        fname_genrz = [report_dir 'Fig_genrz_summary_' param_name '.pdf'];
     end
-    saveas(fig_genrz, fname_genrz);
+    exportgraphics(fig_genrz, fname_genrz, 'ContentType', 'vector');
     fprintf('  Saved: %s\n', fname_genrz);
 
 end  % parameter loop
@@ -832,18 +832,9 @@ for p = 1 : length(param.param2decode)
             col    = colorareas(ar,:) / 255;
             N_vals = param.pseudopop(valid_n);
 
-            eval_idx = find(N_vals == N_eval_global, 1);
-            if ~isempty(eval_idx)
-                leg_label = sprintf('%s  %.3f @N=%d', area2test_name{ar}, ...
-                                    curve(valid_n(eval_idx)), N_eval_global);
-            else
-                leg_label = sprintf('%s  (no data @N=%d)', area2test_name{ar}, N_eval_global);
-            end
-
             plot(ax_ws, log2(N_vals), curve(valid_n), '-o', ...
                  'Color', col, 'LineWidth', 1.4, 'MarkerSize', 8, ...
-                 'MarkerFaceColor', col, 'MarkerEdgeColor', 'none', ...
-                 'DisplayName', leg_label);
+                 'MarkerFaceColor', col, 'MarkerEdgeColor', 'none');
         end
 
         yline(ax_ws, 0.5, 'k--', 'LineWidth', 0.9, 'HandleVisibility', 'off');
@@ -864,14 +855,13 @@ for p = 1 : length(param.param2decode)
         end
         title(ax_ws, [fig_ttl_ws '  -  Monkey ' mks{m_idx}], ...
               'Interpreter', 'none', 'FontSize', 13);
-        legend(ax_ws, 'Location', 'northwest', 'FontSize', 7);
         box(ax_ws, 'on');
     end
 end
 
 drawnow;
-fname_ws = [report_dir 'Fig_S5_popsize.png'];
-saveas(fig_ws, fname_ws);
+fname_ws = [report_dir 'Fig_S6_popsize.pdf'];
+exportgraphics(fig_ws, fname_ws, 'ContentType', 'vector');
 fprintf('  Saved: %s\n', fname_ws);
 
 %% Robustness: LME contrasts vs log2(N)
@@ -884,10 +874,9 @@ fprintf('  Saved: %s\n', fname_ws);
 % Interpretation guide:
 %   Filled circles at a given N = that area's estimate is significant (|z| > 1.96).
 %   Dotted vertical line = N_eval_global (where main statistics are reported).
-%   SE shading is opaque by default (alpha_rob = 1) for clean vector export;
-%   set alpha_rob = 0.15 to visualise uncertainty bands.
+%   Shaded bands = 95% CI (opacity set by alpha_rob).
 
-alpha_rob    = 1;    % SE shading opacity (1 = hidden for Corel/vector export)
+alpha_rob    = 0.15; % CI shading opacity
 metric_names = {'CCGP'};
 
 for p = 1 : length(param.param2decode)
@@ -928,7 +917,7 @@ for p = 1 : length(param.param2decode)
             v   = vals_mat(ar,:);
             s   = se_mat(ar,:);
 
-            % 95% CI shading (opaque by default - set alpha_rob < 1 to show)
+            % 95% CI shading
             x_fill = [LogN_rob_vec, fliplr(LogN_rob_vec)];
             y_fill = [v + 1.96*s,   fliplr(v - 1.96*s)];
             fill(ax_r, x_fill, y_fill, col, 'FaceAlpha', alpha_rob, ...
@@ -963,18 +952,14 @@ for p = 1 : length(param.param2decode)
 
     drawnow;
     if strcmp(param_name_rob, 'chosenflavor')
-        fname_rob_png = [report_dir 'Fig_S7a_robustness_flavor.png'];
-        fname_rob_pdf = [report_dir 'Fig_S7a_robustness_flavor'];
+        fname_rob = [report_dir 'Fig_S8a_robustness_flavor.pdf'];
     elseif strcmp(param_name_rob, 'chosenside')
-        fname_rob_png = [report_dir 'Fig_S7b_robustness_side.png'];
-        fname_rob_pdf = [report_dir 'Fig_S7b_robustness_side'];
+        fname_rob = [report_dir 'Fig_S8b_robustness_side.pdf'];
     else
-        fname_rob_png = [report_dir 'Fig_robustness_CCGP_' param_name_rob '.png'];
-        fname_rob_pdf = [report_dir 'Fig_robustness_CCGP_' param_name_rob];
+        fname_rob = [report_dir 'Fig_robustness_CCGP_' param_name_rob '.pdf'];
     end
-    saveas(fig_rob, fname_rob_png);
-    % print(fig_rob, fname_rob_pdf, '-dpdf', '-vector');
-    fprintf('  Saved: %s + .pdf\n', fname_rob_png);
+    exportgraphics(fig_rob, fname_rob, 'ContentType', 'vector');
+    fprintf('  Saved: %s\n', fname_rob);
 end
 
 %% Posthoc: pairwise CCGP contrast comparisons between areas
@@ -1150,16 +1135,16 @@ for p_ph = 1 : length(param.param2decode)
     drawnow;
     if posthoc_compact
         if strcmp(param_name_ph, 'chosenflavor')
-            fname_ph = [report_dir 'Fig_S6d_area_flavor.png'];
+            fname_ph = [report_dir 'Fig_S7d_area_flavor.pdf'];
         elseif strcmp(param_name_ph, 'chosenside')
-            fname_ph = [report_dir 'Fig_S6d_area_side.png'];
+            fname_ph = [report_dir 'Fig_S7d_area_side.pdf'];
         else
-            fname_ph = [report_dir 'Fig_posthoc_CCGP_' param_name_ph '_compact.png'];
+            fname_ph = [report_dir 'Fig_posthoc_CCGP_' param_name_ph '_compact.pdf'];
         end
     else
-        fname_ph = [report_dir 'Fig_posthoc_CCGP_' param_name_ph '.png'];
+        fname_ph = [report_dir 'Fig_posthoc_CCGP_' param_name_ph '.pdf'];
     end
-    saveas(fig_ph, fname_ph);
+    exportgraphics(fig_ph, fname_ph, 'ContentType', 'vector');
     fprintf('  Saved: %s\n', fname_ph);
 
 end  % p_ph

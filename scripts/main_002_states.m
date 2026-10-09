@@ -233,7 +233,7 @@ xlabel('\Delta Probability (Mathematical Difference)');
 ylabel('Average Neural Distance');
 legend('Population Mean \pm SEM', 'Linear Fit', 'Location', 'NorthWest');
 grid on;
-saveas(gcf, [report_dir 'Fig_R5ab_topology_distances.png']);
+exportgraphics(gcf, [report_dir 'Fig_R5ab_topology_distances.pdf'], 'ContentType', 'vector');
 
 %- Linearity + PCA Check
 figure('Position', [150, 150, 450, 400]);
@@ -245,7 +245,7 @@ xlabel('Variance Explained by PC1 (%)');
 ylabel('Number of Sessions');
 legend('Sessions', sprintf('Mean PC1 Variance = %.1f%%', nanmean(all_pc1_explained)), 'Location', 'NorthWest');
 grid on;
-saveas(gcf, [report_dir 'Fig_R5c_topology_pc1.png']);
+exportgraphics(gcf, [report_dir 'Fig_R5c_topology_pc1.pdf'], 'ContentType', 'vector');
 
 %% FIG 2B - Plot example trials decoding performance for some sessions
 
@@ -278,7 +278,7 @@ for i = example_sess
         xlim([-500 1000])
     end
 end
-saveas(gcf, [report_dir 'Fig_2b_example_trials.png']);
+exportgraphics(gcf, [report_dir 'Fig_2b_example_trials.pdf'], 'ContentType', 'vector');
 
 %% FIG 2C-D and S5A - extract number, duration and start time of states + PLOT/STATISTICS
 
@@ -527,7 +527,7 @@ for m = 1:length(mk_names)
     title([mk_names{m} ': Ratio Ch/Unch dur vs |Pref Bias| (r=' num2str(r_dur_ratio(1,2),'%.2f') ', p=' num2str(p_dur_ratio(1,2),'%.4f') ')']);
 end
 
-saveas(gcf, [report_dir 'Fig_extra_pref_states.png']); 
+% exportgraphics(gcf, [report_dir 'Fig_extra_pref_states.pdf'], 'ContentType', 'vector');
 
 %% look at posteriors and saccades
 
@@ -946,7 +946,7 @@ for k = 1:2
     style_box_axes(ax, true, qh_ylab{k}, [], [0.5 2.5]);
     set(ax, 'XTick', [1 2], 'XTickLabel', {'Quick', 'Hesit'});
 end
-save_fig(fg, [report_dir 'Fig_extra_hesit_ratio']);
+% save_fig(fg, [report_dir 'Fig_extra_hesit_ratio']);
 
 % --- LME: ratio ~ type + (1|monkey) + (1|monkey:session) ---
 nb_ratio_all_qh  = [nb_ratio_quick_qh;  nb_ratio_hesit_qh];
@@ -1220,7 +1220,7 @@ ylabel('t-statistic (look-chosen vs look-unchosen)','FontSize',14);
 title('Posthoc t-stats across dwell times','FontSize',14);
 legend(contrast_labels_dw_short, 'Location','best','FontSize',12);
 set(gca,'XTick',dwell_times,'FontSize',12);
-saveas(gcf,[report_dir 'Fig_R6_fixation_dwell_sweep.png']);
+exportgraphics(gcf, [report_dir 'Fig_R6_fixation_dwell_sweep.pdf'], 'ContentType', 'vector');
 
 
 %% FIG 2H - check r2 when removing neurons
@@ -1387,7 +1387,7 @@ ylabel('Correlation Coefficient (R)');
 title('Performance Drop (from LME)');
 box off; hold off;
 
-saveas(gcf, [report_dir 'Fig_2h_ablation.png']);
+exportgraphics(gcf, [report_dir 'Fig_2h_ablation.pdf'], 'ContentType', 'vector');
 
 %% ═══ Local functions: boxplot figure style ═══════════════════════════════════
 
@@ -1478,7 +1478,6 @@ end
 end
 
 function save_fig(fg, fname)
-% PNG (300 dpi) and vector PDF (for CorelDRAW / Illustrator).
-% exportgraphics(fg, [fname '.png'], 'Resolution', 300);
+% Vector PDF (for CorelDRAW / Illustrator).
 exportgraphics(fg, [fname '.pdf'], 'ContentType', 'vector');
 end

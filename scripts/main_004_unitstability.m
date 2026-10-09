@@ -214,28 +214,28 @@ end
 
 % Create combined 2x3 figure: flavor (row 1) | side (row 2)
 %   columns: sign consistency | scatter vs generalization | flip rate
-fig_combined = figure('Name','Fig S8 - Sign Consistency & Flip Rate','Position',[50 50 1600 950]);
+fig_combined = figure('Name','Fig S11 - Sign Consistency & Flip Rate','Position',[50 50 1600 950]);
 
 %% ========================================================================
 % Subplot (2,3,1): Flavor sign consistency - deviation from chance
 % =========================================================================
 subplot(2,3,1); hold on;
-bar_w = 0.25;  x_pos = 1 : nAreas;
+bar_w = 0.25;  x_pos = 1 : nAreas;  h_st = gobjects(1,2);
 for st = 1 : 2
     offset = (st-1.5) * bar_w;
     for ar = 1 : nAreas
         bx  = x_pos(ar) + offset;
         val = prop(ar,st);
-        bar(bx, val, bar_w, 'FaceColor', state_col(st,:), 'EdgeColor', 'none', 'FaceAlpha', 1);
+        h_st(st) = bar(bx, val, bar_w, 'FaceColor', state_col(st,:), 'EdgeColor', 'none', 'FaceAlpha', 1);
         if ~isnan(p_binom_fdr(ar,st)) && p_binom_fdr(ar,st) < 0.05
-            text(bx, val+0.02, '*', 'HorizontalAlignment','center','FontSize',18,'Color',state_col(st,:),'FontWeight','bold');
+            text(bx, val+0.02, '*', 'HorizontalAlignment','center','FontSize',21,'Color',state_col(st,:),'FontWeight','bold');
         end
     end
 end
 yline(0.5,'--','Color',[0.5 0.5 0.5],'LineWidth',1.2);
-set(gca,'XTick',x_pos,'XTickLabel',area2test_name,'FontSize',13); xtickangle(45);
+set(gca,'XTick',x_pos,'XTickLabel',area2test_name,'FontSize',16); xtickangle(90);
 ylim([0 1]); ylabel('P(same sign as 1FC)'); title('Flavor: sign consistency');
-legend({'Chosen','Unchosen'},'Location','northeast','FontSize',12); box off;
+legend(h_st, {'Chosen','Unchosen'},'Location','northeast','FontSize',15); box off;
 
 %% ========================================================================
 % Congruency reframing table (FLAVOR)
@@ -373,9 +373,9 @@ end
 subplot(2,3,3); hold on;
 for ar = 1 : nAreas
     bar(ar, flip_prop_flav(ar), 0.7, 'FaceColor', colorareas(ar,:), 'EdgeColor','none');
-    text(ar, 0.03, sprintf('n=%d',flip_n_total_flav(ar)), 'HorizontalAlignment','center','FontSize',10,'Color',[1 1 1]);
+    text(ar, 0.03, sprintf('n=%d',flip_n_total_flav(ar)), 'Rotation',90,'HorizontalAlignment','left','VerticalAlignment','middle','FontSize',12,'Color',[1 1 1]);
     if ~isnan(flip_p_fdr_flav(ar)) && flip_p_fdr_flav(ar) < 0.05
-        text(ar, flip_prop_flav(ar)+0.025, '*', 'HorizontalAlignment','center','FontSize',18,'FontWeight','bold');
+        text(ar, flip_prop_flav(ar)+0.025, '*', 'HorizontalAlignment','center','FontSize',21,'FontWeight','bold');
     end
     if ~isnan(flip_exp_rate_flav(ar))
         plot(ar + [-0.3 0.3], [flip_exp_rate_flav(ar) flip_exp_rate_flav(ar)], '-', ...
@@ -383,11 +383,9 @@ for ar = 1 : nAreas
     end
 end
 yline(0.5,'--','Color',[0.5 0.5 0.5],'LineWidth',1);
-set(gca,'XTick',1:nAreas,'XTickLabel',area2test_name,'FontSize',13); xtickangle(45);
-ylim([0 1]); ylabel('P(flip chosen<->unchosen across states)');
-title('Flavor: cross-state flip rate','FontSize',15); box off;
-text(0.98, 0.98, 'horizontal bars = expected under independence', 'Units','normalized', ...
-    'HorizontalAlignment','right','VerticalAlignment','top','FontSize',11,'FontAngle','italic');
+set(gca,'XTick',1:nAreas,'XTickLabel',area2test_name,'FontSize',16); xtickangle(90);
+ylim([0 1]); ylabel('Cross-state flip proportion');
+title('Flavor: cross-state flip rate','FontSize',18); box off;
 
 %% ========================================================================
 % Subplot (2,3,2): Flavor scatter - sign consistency vs generalization
@@ -404,17 +402,17 @@ if exist(unified_file,'file') && ~isempty(who('-file',unified_file,'all_contrast
         scatter(genrz_model(ar), sign_consist_avg_flav(ar), 100, colorareas(ar,:), 'filled', 'MarkerEdgeColor',[0 0 0],'LineWidth',0.8);
         plot([genrz_model(ar)-1.96*genrz_se_mod(ar), genrz_model(ar)+1.96*genrz_se_mod(ar)], ...
              [sign_consist_avg_flav(ar), sign_consist_avg_flav(ar)], '-','Color',[0.6 0.6 0.6],'LineWidth',0.8);
-        text(genrz_model(ar)+0.003, sign_consist_avg_flav(ar)+0.008, area2test_name{ar}, 'FontSize',12,'FontWeight','bold','Color',colorareas(ar,:));
+        text(genrz_model(ar)+0.003, sign_consist_avg_flav(ar)+0.008, area2test_name{ar}, 'FontSize',15,'FontWeight','bold','Color',colorareas(ar,:));
     end
     xline(0,'--','Color',[0.7 0.7 0.7]); yline(0.5,'--','Color',[0.7 0.7 0.7]);
     xlabel('Generalization (cross-state CCGP) - 0.5 (LME at N=200)');
     ylabel('Sign consistency (avg Chosen & Unchosen)');
     title('Flavor: cross-state decoding vs sign preservation');
-    set(gca,'FontSize',14); box off;
+    set(gca,'FontSize',17); box off;
     valid = ~isnan(genrz_model) & ~isnan(sign_consist_avg_flav);
     if sum(valid) > 3
         [r_corr,p_corr] = corr(genrz_model(valid), sign_consist_avg_flav(valid));
-        text(0.05,0.95,sprintf('r = %.3f, p = %.3f',r_corr,p_corr),'Units','normalized','FontSize',13,'VerticalAlignment','top');
+        text(0.05,0.95,sprintf('r = %.3f, p = %.3f',r_corr,p_corr),'Units','normalized','FontSize',16,'VerticalAlignment','top');
     end
 else
     warning('states_2afc_ccgp.mat not found - skipping generalization scatter (flavor).');
@@ -574,16 +572,16 @@ for st = 1 : 2
     for ar = 1 : nAreas
         bx  = x_pos(ar) + offset;
         val = prop(ar,st);
-        bar(bx, val, bar_w, 'FaceColor', state_col(st,:), 'EdgeColor', 'none', 'FaceAlpha', 1);
+        h_st(st) = bar(bx, val, bar_w, 'FaceColor', state_col(st,:), 'EdgeColor', 'none', 'FaceAlpha', 1);
         if ~isnan(p_binom_fdr(ar,st)) && p_binom_fdr(ar,st) < 0.05
-            text(bx, val+0.02, '*', 'HorizontalAlignment','center','FontSize',18,'Color',state_col(st,:),'FontWeight','bold');
+            text(bx, val+0.02, '*', 'HorizontalAlignment','center','FontSize',21,'Color',state_col(st,:),'FontWeight','bold');
         end
     end
 end
 yline(0.5,'--','Color',[0.5 0.5 0.5],'LineWidth',1.2);
-set(gca,'XTick',x_pos,'XTickLabel',area2test_name,'FontSize',13); xtickangle(45);
+set(gca,'XTick',x_pos,'XTickLabel',area2test_name,'FontSize',16); xtickangle(90);
 ylim([0 1]); ylabel('P(same sign as 1FC)'); title('Side: sign consistency');
-legend({'Chosen','Unchosen'},'Location','northeast','FontSize',12); box off;
+legend(h_st, {'Chosen','Unchosen'},'Location','northeast','FontSize',15); box off;
 
 %% ========================================================================
 % Congruency reframing table (SIDE)
@@ -719,9 +717,9 @@ end
 subplot(2,3,6); hold on;
 for ar = 1 : nAreas
     bar(ar, flip_prop_side(ar), 0.7, 'FaceColor', colorareas(ar,:), 'EdgeColor','none');
-    text(ar, 0.03, sprintf('n=%d',flip_n_total_side(ar)), 'HorizontalAlignment','center','FontSize',10,'Color',[1 1 1]);
+    text(ar, 0.03, sprintf('n=%d',flip_n_total_side(ar)), 'Rotation',90,'HorizontalAlignment','left','VerticalAlignment','middle','FontSize',12,'Color',[1 1 1]);
     if ~isnan(flip_p_fdr_side(ar)) && flip_p_fdr_side(ar) < 0.05
-        text(ar, flip_prop_side(ar)+0.025, '*', 'HorizontalAlignment','center','FontSize',18,'FontWeight','bold');
+        text(ar, flip_prop_side(ar)+0.025, '*', 'HorizontalAlignment','center','FontSize',21,'FontWeight','bold');
     end
     if ~isnan(flip_exp_rate_side(ar))
         plot(ar + [-0.3 0.3], [flip_exp_rate_side(ar) flip_exp_rate_side(ar)], '-', ...
@@ -729,11 +727,9 @@ for ar = 1 : nAreas
     end
 end
 yline(0.5,'--','Color',[0.5 0.5 0.5],'LineWidth',1);
-set(gca,'XTick',1:nAreas,'XTickLabel',area2test_name,'FontSize',13); xtickangle(45);
-ylim([0 1]); ylabel('P(flip chosen<->unchosen across states)');
-title('Side: cross-state flip rate','FontSize',15); box off;
-text(0.98, 0.98, 'horizontal bars = expected under independence', 'Units','normalized', ...
-    'HorizontalAlignment','right','VerticalAlignment','top','FontSize',11,'FontAngle','italic');
+set(gca,'XTick',1:nAreas,'XTickLabel',area2test_name,'FontSize',16); xtickangle(90);
+ylim([0 1]); ylabel('Cross-state flip proportion');
+title('Side: cross-state flip rate','FontSize',18); box off;
 
 %% ========================================================================
 % Subplot (2,3,5): Side scatter - sign consistency vs generalization
@@ -753,17 +749,17 @@ if exist(unified_file,'file') && ~isempty(who('-file',unified_file,'all_contrast
             scatter(genrz_model(ar), sign_consist_avg_side(ar), 100, colorareas(ar,:), 'filled','MarkerEdgeColor',[0 0 0],'LineWidth',0.8);
             plot([genrz_model(ar)-1.96*genrz_se_mod(ar), genrz_model(ar)+1.96*genrz_se_mod(ar)], ...
                  [sign_consist_avg_side(ar), sign_consist_avg_side(ar)], '-','Color',[0.6 0.6 0.6],'LineWidth',0.8);
-            text(genrz_model(ar)+0.003, sign_consist_avg_side(ar)+0.008, area2test_name{ar},'FontSize',12,'FontWeight','bold','Color',colorareas(ar,:));
+            text(genrz_model(ar)+0.003, sign_consist_avg_side(ar)+0.008, area2test_name{ar},'FontSize',15,'FontWeight','bold','Color',colorareas(ar,:));
         end
         xline(0,'--','Color',[0.7 0.7 0.7]); yline(0.5,'--','Color',[0.7 0.7 0.7]);
         xlabel('Generalization (cross-state CCGP) - 0.5 (LME at N=200)');
         ylabel('Sign consistency (avg Chosen & Unchosen)');
         title('Side: cross-state decoding vs sign preservation');
-        set(gca,'FontSize',14); box off;
+        set(gca,'FontSize',17); box off;
         valid = ~isnan(genrz_model) & ~isnan(sign_consist_avg_side);
         if sum(valid) > 3
             [r_corr,p_corr] = corr(genrz_model(valid), sign_consist_avg_side(valid));
-            text(0.05,0.95,sprintf('r = %.3f, p = %.3f',r_corr,p_corr),'Units','normalized','FontSize',13,'VerticalAlignment','top');
+            text(0.05,0.95,sprintf('r = %.3f, p = %.3f',r_corr,p_corr),'Units','normalized','FontSize',16,'VerticalAlignment','top');
         end
     end
 else
@@ -771,12 +767,12 @@ else
     text(0.5,0.5,'data not found','HorizontalAlignment','center','Units','normalized');
 end
 
-sgtitle('Fig S8 - Sign consistency (col 1) | Generalization (col 2) | Flip rate (col 3)','FontSize',15);
-saveas(fig_combined, [report_dir 'Fig_S8_neurons.png']);
+sgtitle('Fig S11 - Sign consistency (col 1) | Generalization (col 2) | Flip rate (col 3)','FontSize',18);
+exportgraphics(fig_combined, [report_dir 'Fig_S11_neurons.pdf'], 'ContentType', 'vector');
 
 disp(' ')
 disp('Section B (side) done.')
-disp('All Fig S8 analyses complete.')
+disp('All Fig S11 analyses complete.')
 
 diary off;
 utils_diary(fid_log, 'Figures saved to: %s\n', report_dir);

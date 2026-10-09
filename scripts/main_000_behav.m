@@ -191,7 +191,7 @@ monkey_names = unique(monkey);
 main_colors = containers.Map({'M', 'X'}, {[0.2, 0.5, 0.9], [0.55, 0.35, 0.15]});
 light_colors = containers.Map({'M', 'X'}, {[0.7, 0.85, 1], [0.85, 0.75, 0.6]});
 
-fig(1);
+fig_main = figure('Position', [1057 482 1370 740], 'Color', 'w');   % 1/4 wider than fig(1)
 
 subplot_indices = {[3 4], [8 9]}; % subplot positions for each monkey
 
@@ -347,8 +347,7 @@ for i = 1:numel(monkey_names)
 end
 
 % Save the main behavior summary figure in the report_000 folder.
-fig_main = figure(1);
-saveas(fig_main, [report_dir 'Fig_1bcdf_behav.png']);
+exportgraphics(fig_main, [report_dir 'Fig_1bcdf_behav.pdf'], 'ContentType', 'vector');
 
 % fig(1);plot(preference.choice_bias,preference.bias_point,'o','MarkerFaceColor',[0.5 0.5 0.5],'MarkerEdgeColor','none');
 
@@ -611,9 +610,9 @@ burst_res = zeros(length(area2test), 4);
 
 % stat model (mixed effect) to see whether firing rate is significantly differente between 1FC and 2AFC task for each area and random effect monkey 
 % plot the diff_fr for each area, the average of diff_fr, and whether significantly different from 0, for both monkey combined
-figure;
+fg = figure; fg.Position(4) = fg.Position(4)/2;   % half the default height
 % Subplot 1: Difference in Firing Rate
-subplot(1,3,1)
+ax_s3b(1) = subplot(1,3,1);
 hold on;
 for ar = 1 : length(area2test)
     idx = ismember(info.area,area2test{ar});
@@ -633,7 +632,7 @@ end
 set(gca, 'XTick', 1:length(area2test), 'XTickLabel', area2test_name)
 xtickangle(45)
 ylim([-5 5])
-ylabel('Difference in Firing Rate (2AFC - 1FC)')
+ylabel('2AFC - 1FC')
 title('Firing Rate')
 hold off;
 
@@ -653,7 +652,7 @@ end
 utils_diary(fid_log, '\n');
 
 % Subplot 2: Difference in Fano Factor
-subplot(1,3,2)
+ax_s3b(2) = subplot(1,3,2);
 hold on;
 for ar = 1 : length(area2test)
     idx = ismember(info.area,area2test{ar});
@@ -673,7 +672,7 @@ end
 set(gca, 'XTick', 1:length(area2test), 'XTickLabel', area2test_name)
 xtickangle(45)
 ylim([-5 5])
-ylabel('Difference in Fano Factor (2AFC - 1FC)')
+ylabel('2AFC - 1FC')
 title('Fano Factor')
 hold off;
 
@@ -693,7 +692,7 @@ end
 utils_diary(fid_log, '\n');
 
 % Subplot 3: Difference in Burstiness
-subplot(1,3,3)
+ax_s3b(3) = subplot(1,3,3);
 hold on;
 for ar = 1 : length(area2test)
     idx = ismember(info.area,area2test{ar});
@@ -716,7 +715,7 @@ end
 set(gca, 'XTick', 1:length(area2test), 'XTickLabel', area2test_name)
 ylim([-.25 .25])
 xtickangle(45)
-ylabel('Difference in Burstiness (2AFC - 1FC)')
+ylabel('2AFC - 1FC')
 title('Burstiness')
 hold off;
 
@@ -735,12 +734,16 @@ for ar = 1:length(area2test_name)
 end
 utils_diary(fid_log, '\n');
 
-saveas(gcf, [report_dir 'Fig_S3b_spiking.png']);
+% same axes size for all panels (otherwise each one shrinks to fit its own labels)
+for k = 1 : 3
+    set(ax_s3b(k), 'Position', [0.08 + (k-1)*0.33, 0.27, 0.23, 0.6]);
+end
+exportgraphics(gcf, [report_dir 'Fig_S3b_spiking.pdf'], 'ContentType', 'vector');
 
 %% plot distribution of Fano factor, burstiness, and firing rate for each task (averaged across areas)
 col_task = [100 60 150 ; 250 130 190]/255;
 
-figure;
+fg = figure; fg.Position(4) = fg.Position(4)/2;   % half the default height
 % Subplot 1: Firing Rate
 subplot(1,3,1)
 [f1, x1] = hist(log(info.fr_1FC), 30);
@@ -785,4 +788,4 @@ legend('1FC', '2AFC')
 title('Burstiness')
 hold off;
 
-saveas(gcf, [report_dir 'Fig_S3a_spiking.png']);
+exportgraphics(gcf, [report_dir 'Fig_S3a_spiking.pdf'], 'ContentType', 'vector');

@@ -35,7 +35,7 @@ report_dirs = {'report_000' 'report_001' 'report_002' 'report_003' ...
 
 seed = 55555; % random seed, reset before each script
 
-remove report folders written by the scripts above
+% remove report folders written by the scripts above
 for r = 1 : length(report_dirs)
     report_dir = [currentPath '\' report_dirs{r} '\'];
     if exist(report_dir,'dir')

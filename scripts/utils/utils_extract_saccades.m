@@ -1,7 +1,7 @@
 function [saccadeTimes, saccadeTable] = utils_extract_saccades(DATA_FOLDER, OUTPUT_FOLDER)
 %UTILS_EXTRACT_SACCADES Extract saccade timing/counts from EOG sessions.
 %   [saccadeTimes, saccadeTable] = utils_extract_saccades(DATA_FOLDER, OUTPUT_FOLDER)
-%   Loads EOG and behavioral data to identify saccades via a velocity-based threshold.
+%   Loads EOG and behavioral data to identify saccades via a position-based threshold.
 
 if nargin < 1 || isempty(DATA_FOLDER)
     f = mfilename('fullpath');
